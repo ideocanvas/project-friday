@@ -25,14 +25,14 @@
 
 Everything is governed by a single `.env` file and a shared `agents.json` to ensure consistency across Node.js and Python.
 
-| Component           | Choice               | Reason                                                                                  |
-| :------------------ | :------------------- | :-------------------------------------------------------------------------------------- |
-| **Orchestrator**    | Node.js (nvm)        | Handles system execution alongside Python fallback.                                     |
-| **Process Manager** | PM2                  | Daemonizes and independently monitors distinct workflows (Gateway, Scheduler, Janitor, Evolution). |
-| **LLM (Chat)**       | LM Studio (Qwen3.5-35B-A3B) | Local LLM server via OpenAI-compatible API.                              |
-| **Evolution**       | GLM-5 (Z.ai Cloud API) | High-reasoning "Coding" model for generating new skills via cloud API.                       |
-| **Audio**           | MLX-Audio            | Optimized for Mac (Qwen3-TTS / Whisper-v3).                                             |
-| **Storage**         | File System          | Pure `csv`, `md`, and `json` with atomic locking. No SQL/NoSQL overhead.                |
+| Component           | Choice                      | Reason                                                                                             |
+| :------------------ | :-------------------------- | :------------------------------------------------------------------------------------------------- |
+| **Orchestrator**    | Node.js (nvm)               | Handles system execution alongside Python fallback.                                                |
+| **Process Manager** | PM2                         | Daemonizes and independently monitors distinct workflows (Gateway, Scheduler, Janitor, Evolution). |
+| **LLM (Chat)**      | LM Studio (Qwen3.5-35B-A3B) | Local LLM server via OpenAI-compatible API.                                                        |
+| **Evolution**       | GLM-5 (Z.ai Cloud API)      | High-reasoning "Coding" model for generating new skills via cloud API.                             |
+| **Audio**           | MLX-Audio                   | Optimized for Mac (Qwen3-TTS / Whisper-v3).                                                        |
+| **Storage**         | File System                 | Pure `csv`, `md`, and `json` with atomic locking. No SQL/NoSQL overhead.                           |
 
 ---
 
@@ -47,6 +47,8 @@ Everything is governed by a single `.env` file and a shared `agents.json` to ens
 ├── ecosystem.config.js   # PM2 configuration specifying 4 Node processes
 
 ├── /core                 # Node.js processes: gateway.js, scheduler.js, janitor.js, evolution.js
+
+├── /logs                 # PM2 process logs
 
 ├── /queue                # Inter-process message queue (JSON files)
 │   ├── pending_messages.json   # Scheduler/Evolution writes, Gateway reads
@@ -71,7 +73,7 @@ Everything is governed by a single `.env` file and a shared `agents.json` to ens
 
 └── /users
 
-    └── /[phone_number]   # Isolated: memory.md, profile.json, reminders.json
+    └── /[phone_number]   # Isolated: memory.log (JSONL), profile.json, reminders.json
 
 ```
 
@@ -225,21 +227,16 @@ The Evolution process is **non-blocking** - it runs in the background like "baki
 
 4.  **Generation Loop (Max 10 Rounds):**
     For each round (1-10):
-    
-    a. **Generate:** Call Ollama Cloud API (GLM-5) with Python template + error history from previous rounds
-    
-    b. **Save:** Write code to `/skills/generated/temp_[job_id].py`
-    
-    c. **Test Run:** Execute in sandboxed `child_process.spawn` with timeout (60s)
-    
-    d. **Evaluate:**
-        - If exit code = 0 and no stderr → **SUCCESS** → Move to `/skills/generated/[skill_name].py`
-        - If failed → Capture error, append to error history → **Next Round**
 
-    e. **User Notification (after each round):**
-        - Write progress update to `/queue/pending_messages.json`
-        - Example: "Round 3/10: Testing skill..." or "Round 3/10: Got an error, trying to fix..."
-        - Gateway picks up and sends WhatsApp message
+    a. **Generate:** Call Ollama Cloud API (GLM-5) with Python template + error history from previous rounds
+
+    b. **Save:** Write code to `/skills/generated/temp_[job_id].py`
+
+    c. **Test Run:** Execute in sandboxed `child_process.spawn` with timeout (60s)
+
+    d. **Evaluate:** - If exit code = 0 and no stderr → **SUCCESS** → Move to `/skills/generated/[skill_name].py` - If failed → Capture error, append to error history → **Next Round**
+
+    e. **User Notification (after each round):** - Write progress update to `/queue/pending_messages.json` - Example: "Round 3/10: Testing skill..." or "Round 3/10: Got an error, trying to fix..." - Gateway picks up and sends WhatsApp message
 
 5.  **If All 10 Rounds Fail:**
     - Mark job as "failed"

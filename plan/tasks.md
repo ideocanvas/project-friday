@@ -18,6 +18,7 @@ This task plan is designed for a **Code Agent** (like RooCode, Cline, or a custo
       - `scheduler.js` - Heartbeat (60s reminder checks) + skill execution (PM2 name: `friday-scheduler`)
       - `janitor.js` - Web portal cleanup (PM2 name: `friday-janitor`)
       - `evolution.js` - Background skill generation with 10-round iteration (PM2 name: `friday-evolution`)
+    - Create `/logs` directory for process logs
 4.  **Task 1.4: Message Queue Setup**
     - Create `/queue/pending_messages.json` as shared JSON queue
     - Implement atomic read/write using `write-file-atomic`
