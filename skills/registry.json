@@ -1,0 +1,74 @@
+{
+  "skills": {
+    "browser": {
+      "name": "Live Browser",
+      "description": "Interact with websites, take screenshots, scrape data",
+      "file": "/skills/builtin/browser/index.js",
+      "type": "builtin",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "enum": ["goto", "screenshot", "scrape_text", "click", "fill", "evaluate", "wait_for_selector", "scroll_down"],
+          "required": true
+        },
+        "url": { "type": "string" },
+        "selector": { "type": "string" },
+        "text": { "type": "string" },
+        "script": { "type": "string" },
+        "timeout": { "type": "number" }
+      }
+    },
+    "search": {
+      "name": "Google Search",
+      "description": "Search the web for current information, news, and data",
+      "file": "/skills/builtin/search/index.js",
+      "type": "builtin",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "enum": ["search", "search_news", "search_images"],
+          "required": true
+        },
+        "query": { "type": "string", "required": true },
+        "numResults": { "type": "number" },
+        "dateRange": {
+          "type": "string",
+          "enum": ["day", "week", "month", "year"]
+        }
+      }
+    },
+    "voice": {
+      "name": "Voice (STT/TTS)",
+      "description": "Convert voice to text (STT) and text to voice (TTS) using MLX-Audio",
+      "file": "/skills/builtin/voice/index.py",
+      "type": "builtin",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "enum": ["transcribe", "speak", "voices"],
+          "required": true
+        },
+        "audio_path": { "type": "string" },
+        "text": { "type": "string" },
+        "voice": { "type": "string" }
+      }
+    },
+    "static_page": {
+      "name": "Static Page Generator",
+      "description": "Generate shareable HTML pages for data, charts, and tables",
+      "file": "/skills/builtin/static_page/index.py",
+      "type": "builtin",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "enum": ["generate", "generate_from_template", "list_pages"],
+          "required": true
+        },
+        "data": { "type": "object" },
+        "template": { "type": "string" },
+        "user_id": { "type": "string" }
+      }
+    }
+  },
+  "version": "1.0.0"
+}

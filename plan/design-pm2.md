@@ -28,7 +28,7 @@ module.exports = {
         QUEUE_PATH: "./queue",
         AI_PROVIDER: "lmstudio",
         AI_BASE_URL: "http://localhost:1234/v1",
-        CHAT_MODEL: "qwen3.5-35b-a3b",
+        CHAT_MODEL: "qwen/qwen3.5-35b-a3b",
       },
       // Restart policy
       autorestart: true,

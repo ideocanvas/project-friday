@@ -1,0 +1,42 @@
+{
+  "friday-gateway": {
+    "name": "friday-gateway",
+    "status": "stopped",
+    "pid": null,
+    "uptime": null,
+    "memory": null,
+    "cpu": null,
+    "restarts": 0,
+    "last_error": null
+  },
+  "friday-scheduler": {
+    "name": "friday-scheduler",
+    "status": "stopped",
+    "pid": null,
+    "uptime": null,
+    "memory": null,
+    "cpu": null,
+    "restarts": 0,
+    "last_error": null
+  },
+  "friday-janitor": {
+    "name": "friday-janitor",
+    "status": "stopped",
+    "pid": null,
+    "uptime": null,
+    "memory": null,
+    "cpu": null,
+    "restarts": 0,
+    "last_error": null
+  },
+  "friday-evolution": {
+    "name": "friday-evolution",
+    "status": "stopped",
+    "pid": null,
+    "uptime": null,
+    "memory": null,
+    "cpu": null,
+    "restarts": 0,
+    "last_error": null
+  }
+}

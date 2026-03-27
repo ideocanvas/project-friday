@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.Python
+*.so
+.env
+
+# Session & Auth (WhatsApp)
+auth_info_baileys/
+sessions/
+*.session
+
+# User Data (Privacy)
+users/*/
+!users/.gitkeep
+
+# Generated Skills (AI-created)
+skills/generated/*/
+!skills/generated/.gitkeep
+
+# Web Portal (Expiring pages)
+web_portal/*/
+!web_portal/.gitkeep
+
+# Temporary Files
+temp/
+*.tmp
+*.log
+
+# GPU Lock
+gpu_active.lock
+
+# Queue (Runtime)
+queue/pending_messages.json
+queue/evolution/pending/*.json
+queue/evolution/processing/*.json
+!queue/.gitkeep
+!queue/evolution/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Chrome Profile
+skills/builtin/browser/chrome-profile/
+
+# Testing
+coverage/
+.nyc_output/
+
+# PM2
+.pm2/

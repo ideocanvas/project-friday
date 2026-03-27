@@ -243,7 +243,7 @@ Incoming WhatsApp Message
          │
          ▼
 ┌─────────────────┐
-│ Call Local LLM │ ─── Qwen3.5-35B-A3B via LM Studio
+│ Call Local LLM │ ─── qwen/qwen3.5-35b-a3b via LM Studio
 │ (gateway.js)   │
 └────────┬────────┘
          │
@@ -280,7 +280,7 @@ SESSION_PATH=./auth_info_baileys
 # LLM
 AI_PROVIDER=lmstudio
 AI_BASE_URL=http://localhost:1234/v1
-CHAT_MODEL=qwen3.5-35b-a3b
+CHAT_MODEL=qwen/qwen3.5-35b-a3b
 ```
 
 ---

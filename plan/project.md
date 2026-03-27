@@ -29,7 +29,7 @@ Everything is governed by a single `.env` file and a shared `agents.json` to ens
 | :------------------ | :-------------------------- | :------------------------------------------------------------------------------------------------- |
 | **Orchestrator**    | Node.js (nvm)               | Handles system execution alongside Python fallback.                                                |
 | **Process Manager** | PM2                         | Daemonizes and independently monitors distinct workflows (Gateway, Scheduler, Janitor, Evolution). |
-| **LLM (Chat)**      | LM Studio (Qwen3.5-35B-A3B) | Local LLM server via OpenAI-compatible API.                                                        |
+| **LLM (Chat)**      | LM Studio (qwen/qwen3.5-35b-a3b) | Local LLM server via OpenAI-compatible API.                                                        |
 | **Evolution**       | GLM-5 (Z.ai Cloud API)      | High-reasoning "Coding" model for generating new skills via cloud API.                             |
 | **Audio**           | MLX-Audio                   | Optimized for Mac (Qwen3-TTS / Whisper-v3).                                                        |
 | **Storage**         | File System                 | Pure `csv`, `md`, and `json` with atomic locking. No SQL/NoSQL overhead.                           |
@@ -101,7 +101,7 @@ If a skill (like `gold_tracker.py`) needs to communicate, it handles its own "th
 
 2.  **Logic Check:** If a threshold is met (e.g., price change > 1%), the skill reads the `.env` and `agents.json`.
 
-3.  **Local LLM Call:** The skill calls LM Studio (Qwen3.5-35B-A3B) to: _"As Friday, draft a witty WhatsApp alert for this data."_
+3.  **Local LLM Call:** The skill calls LM Studio (qwen/qwen3.5-35b-a3b) to: _"As Friday, draft a witty WhatsApp alert for this data."_
 
 4.  **Queue Output:** The skill writes the message to `/queue/pending_messages.json`.
 

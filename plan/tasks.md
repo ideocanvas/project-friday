@@ -173,6 +173,6 @@ This task plan is designed for a **Code Agent** (like RooCode, Cline, or a custo
 - [ ] Can the Python environment access the Mac Mini GPU (Metal) for MLX?
 - [ ] Does the Scheduler write to `/queue/pending_messages.json` and Gateway poll it?
 - [ ] Are PM2 processes named (`friday-gateway`, `friday-scheduler`, `friday-janitor`, `friday-evolution`)?
-- [ ] Is the Chat model set to Qwen3.5-35B-A3B via LM Studio?
+- [ ] Is the Chat model set to qwen/qwen3.5-35b-a3b via LM Studio?
 - [ ] Does Evolution send progress updates after each round?
       **Would you like me to generate the actual `tools.json` structure so the Code Agent knows how to register these skills?**
