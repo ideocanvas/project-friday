@@ -5,11 +5,13 @@
  * Handles receiving and sending messages via WhatsApp using Baileys.
  */
 
-import makeWASocket, { 
+import Baileys from '@whiskeysockets/baileys';
+const { 
     useMultiFileAuthState, 
     DisconnectReason, 
-    fetchLatestBaileysVersion 
-} from '@whiskeysockets/baileys';
+    fetchLatestBaileysVersion,
+    makeWASocket
+} = Baileys;
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
@@ -21,7 +23,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Configuration
-const ALLOWED_NUMBERS = (process.env.ALILED_NUMBERS || '').split(',').map(n => n.trim()).filter(Boolean);
+const ALLOWED_NUMBERS: string[] = (process.env.ALILED_NUMBERS || '').split(',').map((n: string) => n.trim()).filter(Boolean);
 const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const QUEUE_PATH = process.env.QUEUE_PATH || './queue';
 const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
@@ -29,19 +31,55 @@ const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
 // Logger
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
+// Type definitions
+interface MemoryEntry {
+    timestamp: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+}
+
+interface QueuedMessage {
+    id: string;
+    to: string;
+    message: string;
+    type: 'text' | 'image' | 'audio';
+    timestamp: string;
+    retry: number;
+    status: 'pending' | 'sent' | 'failed';
+}
+
+interface StatusData {
+    'friday-gateway': {
+        status: string;
+        uptime: string;
+        last_error: string | null;
+    };
+    'friday-scheduler'?: {
+        status: string;
+        uptime: string;
+        last_check: string;
+    };
+    'friday-janitor'?: {
+        status: string;
+        uptime: string;
+        last_run: string;
+        pages_deleted: number;
+    };
+}
+
 /**
  * WhatsApp Gateway Class
  */
 class WhatsAppGateway {
-    constructor() {
-        this.sock = null;
-        this.isReady = false;
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private sock: any = null;
+    private isReady: boolean = false;
 
     /**
      * Connect to WhatsApp
      */
-    async connect() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async connect(): Promise<any> {
         // Setup Auth State (persistent session)
         const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
         const { version } = await fetchLatestBaileysVersion();
@@ -57,11 +95,11 @@ class WhatsAppGateway {
         });
 
         // Handle connection updates
-        this.sock.ev.on('connection.update', (update) => {
+        this.sock.ev.on('connection.update', (update: { connection?: string; lastDisconnect?: { error?: Error } }) => {
             const { connection, lastDisconnect } = update;
             
             if (connection === 'close') {
-                const shouldReconnect = (lastDisconnect.error instanceof Boom)
+                const shouldReconnect = (lastDisconnect?.error instanceof Boom)
                     ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
                     : true;
                 
@@ -78,13 +116,15 @@ class WhatsAppGateway {
         this.sock.ev.on('creds.update', saveCreds);
 
         // Handle incoming messages
-        this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        this.sock.ev.on('messages.upsert', async ({ messages, type }: { messages: any[]; type: string }) => {
             if (type !== 'notify') return;
 
             for (const msg of messages) {
                 if (!msg.message || msg.key.fromMe) continue;
 
                 const jid = msg.key.remoteJid;
+                if (!jid) continue;
+                
                 const phone = this.jidToPhone(jid);
                 
                 // Check whitelist
@@ -130,7 +170,7 @@ class WhatsAppGateway {
     /**
      * Process incoming message
      */
-    async processMessage(jid, text) {
+    async processMessage(jid: string, text: string): Promise<string> {
         // TODO: Implement full message processing
         // 1. Load user profile
         // 2. Load recent memory
@@ -146,7 +186,7 @@ class WhatsAppGateway {
     /**
      * Append to JSONL memory
      */
-    appendMemory(jid, role, content) {
+    appendMemory(jid: string, role: 'user' | 'assistant' | 'system', content: string): void {
         const phone = this.jidToPhone(jid);
         const userDir = path.join(USER_DATA_ROOT, phone);
         
@@ -155,38 +195,38 @@ class WhatsAppGateway {
         }
         
         const memoryPath = path.join(userDir, 'memory.log');
-        const entry = JSON.stringify({
+        const entry: MemoryEntry = {
             timestamp: new Date().toISOString(),
             role: role,
             content: content
-        }) + '\n';
+        };
         
-        fs.appendFileSync(memoryPath, entry, 'utf8');
+        fs.appendFileSync(memoryPath, JSON.stringify(entry) + '\n', 'utf8');
     }
 
     /**
      * Get recent context from memory
      */
-    getRecentContext(jid, limit = 10) {
+    getRecentContext(jid: string, limit: number = 10): MemoryEntry[] {
         const phone = this.jidToPhone(jid);
         const memoryPath = path.join(USER_DATA_ROOT, phone, 'memory.log');
         
         if (!fs.existsSync(memoryPath)) return [];
         
         const lines = fs.readFileSync(memoryPath, 'utf8').trim().split('\n');
-        return lines.slice(-limit).map(line => {
+        return lines.slice(-limit).map((line: string) => {
             try {
-                return JSON.parse(line);
+                return JSON.parse(line) as MemoryEntry;
             } catch {
                 return null;
             }
-        }).filter(Boolean);
+        }).filter((entry): entry is MemoryEntry => entry !== null);
     }
 
     /**
      * Start polling for outgoing messages
      */
-    startQueuePoller() {
+    startQueuePoller(): void {
         setInterval(() => {
             this.pollQueue();
         }, 5000); // Poll every 5 seconds
@@ -195,13 +235,13 @@ class WhatsAppGateway {
     /**
      * Poll pending messages queue
      */
-    pollQueue() {
+    pollQueue(): void {
         const queueFile = path.join(QUEUE_PATH, 'pending_messages.json');
         
         if (!fs.existsSync(queueFile)) return;
         
         try {
-            const messages = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
+            const messages: QueuedMessage[] = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
             const pending = messages.filter(m => m.status === 'pending');
             
             for (const msg of pending) {
@@ -215,8 +255,8 @@ class WhatsAppGateway {
     /**
      * Send queued message
      */
-    async sendQueuedMessage(msg) {
-        if (!this.isReady) return;
+    async sendQueuedMessage(msg: QueuedMessage): Promise<void> {
+        if (!this.isReady || !this.sock) return;
         
         const jid = this.phoneToJid(msg.to);
         
@@ -242,11 +282,11 @@ class WhatsAppGateway {
     /**
      * Update queue message status
      */
-    updateQueueMessageStatus(id, status) {
+    updateQueueMessageStatus(id: string, status: 'pending' | 'sent' | 'failed'): void {
         const queueFile = path.join(QUEUE_PATH, 'pending_messages.json');
-        const messages = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
+        const messages: QueuedMessage[] = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
         const idx = messages.findIndex(m => m.id === id);
-        if (idx !== -1) {
+        if (idx !== -1 && messages[idx]) {
             messages[idx].status = status;
             fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2));
         }
@@ -255,11 +295,11 @@ class WhatsAppGateway {
     /**
      * Update queue message retry count
      */
-    updateQueueMessageRetry(id, retry) {
+    updateQueueMessageRetry(id: string, retry: number): void {
         const queueFile = path.join(QUEUE_PATH, 'pending_messages.json');
-        const messages = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
+        const messages: QueuedMessage[] = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
         const idx = messages.findIndex(m => m.id === id);
-        if (idx !== -1) {
+        if (idx !== -1 && messages[idx]) {
             messages[idx].retry = retry;
             fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2));
         }
@@ -268,23 +308,23 @@ class WhatsAppGateway {
     /**
      * Convert phone number to JID
      */
-    phoneToJid(phone) {
+    phoneToJid(phone: string): string {
         return phone.replace(/\D/g, '') + '@s.whatsapp.net';
     }
 
     /**
      * Extract phone from JID
      */
-    jidToPhone(jid) {
-        return jid.split('@')[0];
+    jidToPhone(jid: string): string {
+        return jid.split('@')[0] || '';
     }
 
     /**
      * Update process status
      */
-    updateStatus(status) {
+    updateStatus(status: string): void {
         const statusFile = path.join(QUEUE_PATH, 'status.json');
-        const statusData = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+        const statusData: StatusData = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
         statusData['friday-gateway'] = {
             ...statusData['friday-gateway'],
             status: status,
@@ -296,7 +336,7 @@ class WhatsAppGateway {
 }
 
 // Start the gateway
-async function main() {
+async function main(): Promise<void> {
     const gateway = new WhatsAppGateway();
     
     try {

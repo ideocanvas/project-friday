@@ -1,5 +1,6 @@
 // PM2 Ecosystem Configuration for Project Friday
 // Run: pm2 start ecosystem.config.js
+// Note: Run 'npm run build' first to compile TypeScript
 
 module.exports = {
     apps: [
@@ -8,7 +9,7 @@ module.exports = {
         // ========================================
         {
             name: 'friday-gateway',
-            script: './core/gateway.js',
+            script: './dist/core/gateway.js',
             cwd: './',
             interpreter: 'none',  // Native ES modules
             env: {
@@ -38,7 +39,7 @@ module.exports = {
         // ========================================
         {
             name: 'friday-scheduler',
-            script: './core/heartbeat.js',
+            script: './dist/core/heartbeat.js',
             cwd: './',
             interpreter: 'none',
             env: {
@@ -66,7 +67,7 @@ module.exports = {
         // ========================================
         {
             name: 'friday-janitor',
-            script: './core/janitor.js',
+            script: './dist/core/janitor.js',
             cwd: './',
             interpreter: 'none',
             env: {
@@ -92,7 +93,7 @@ module.exports = {
         // ========================================
         {
             name: 'friday-evolution',
-            script: './core/evolution.js',
+            script: './dist/core/evolution.js',
             cwd: './',
             interpreter: 'none',
             env: {

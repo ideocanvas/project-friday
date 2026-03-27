@@ -18,10 +18,30 @@ const WEB_PORTAL_ROOT = process.env.WEB_PORTAL_ROOT || './web_portal';
 const PAGE_EXPIRY_HOURS = parseInt(process.env.PAGE_EXPIRY_HOURS || '24', 10);
 const CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
 
+// Type definitions
+interface StatusData {
+    'friday-janitor': {
+        status: string;
+        uptime: string;
+        last_run: string;
+        pages_deleted: number;
+    };
+    'friday-gateway'?: {
+        status: string;
+        uptime: string;
+        last_error: string | null;
+    };
+    'friday-scheduler'?: {
+        status: string;
+        uptime: string;
+        last_check: string;
+    };
+}
+
 /**
  * Clean up expired web portal pages
  */
-function cleanup() {
+function cleanup(): void {
     console.log('🧹 Janitor running - checking for expired pages...');
     
     if (!fs.existsSync(WEB_PORTAL_ROOT)) {
@@ -56,7 +76,8 @@ function cleanup() {
                     deletedCount++;
                 }
             } catch (e) {
-                console.error(`Error checking ${sessionPath}:`, e.message);
+                const error = e as Error;
+                console.error(`Error checking ${sessionPath}:`, error.message);
             }
         }
     }
@@ -68,13 +89,13 @@ function cleanup() {
 /**
  * Update process status
  */
-function updateStatus(deletedCount = 0) {
+function updateStatus(deletedCount: number = 0): void {
     const statusFile = path.join(process.env.QUEUE_PATH || './queue', 'status.json');
     
     if (!fs.existsSync(statusFile)) return;
     
     try {
-        const statusData = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+        const statusData: StatusData = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
         statusData['friday-janitor'] = {
             ...statusData['friday-janitor'],
             status: 'running',
@@ -84,7 +105,8 @@ function updateStatus(deletedCount = 0) {
         };
         fs.writeFileSync(statusFile, JSON.stringify(statusData, null, 2));
     } catch (e) {
-        console.error('Error updating status:', e.message);
+        const error = e as Error;
+        console.error('Error updating status:', error.message);
     }
 }
 

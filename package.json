@@ -2,18 +2,24 @@
   "name": "friday-project",
   "version": "1.0.0",
   "description": "Project Friday - A privacy-first, local AI assistant with WhatsApp integration",
-  "main": "core/gateway.js",
+  "main": "dist/core/gateway.js",
   "type": "module",
   "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
     "start": "pm2 start ecosystem.config.js",
     "stop": "pm2 stop all",
     "restart": "pm2 restart all",
     "logs": "pm2 logs",
     "status": "pm2 status",
-    "gateway": "node core/gateway.js",
-    "scheduler": "node core/heartbeat.js",
-    "janitor": "node core/janitor.js",
-    "evolution": "node core/evolution.js"
+    "gateway": "node dist/core/gateway.js",
+    "scheduler": "node dist/core/heartbeat.js",
+    "janitor": "node dist/core/janitor.js",
+    "evolution": "node dist/core/evolution.js",
+    "dev:gateway": "ts-node --esm core/gateway.ts",
+    "dev:scheduler": "ts-node --esm core/heartbeat.ts",
+    "dev:janitor": "ts-node --esm core/janitor.ts",
+    "dev:evolution": "ts-node --esm core/evolution.ts"
   },
   "keywords": [
     "ai",
@@ -36,7 +42,13 @@
     "playwright": "^1.40.1"
   },
   "devDependencies": {
-    "pm2": "^5.3.0"
+    "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^9.0.7",
+    "@types/write-file-atomic": "^4.0.3",
+    "pm2": "^5.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   },
   "engines": {
     "node": ">=18.0.0"
