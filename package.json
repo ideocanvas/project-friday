@@ -19,7 +19,10 @@
     "dev:gateway": "ts-node --esm core/gateway.ts",
     "dev:scheduler": "ts-node --esm core/heartbeat.ts",
     "dev:janitor": "ts-node --esm core/janitor.ts",
-    "dev:evolution": "ts-node --esm core/evolution.ts"
+    "dev:evolution": "ts-node --esm core/evolution.ts",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
   },
   "keywords": [
     "ai",
@@ -32,21 +35,24 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.6.0",
     "dotenv": "^16.3.1",
-    "pino": "^8.16.2",
-    "@hapi/boom": "^10.0.1",
-    "write-file-atomic": "^5.0.1",
     "node-cron": "^3.0.3",
+    "pino": "^8.16.2",
+    "playwright": "^1.40.1",
     "uuid": "^9.0.1",
-    "playwright": "^1.40.1"
+    "write-file-atomic": "^5.0.1"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.10.0",
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^9.0.7",
     "@types/write-file-atomic": "^4.0.3",
+    "jest": "^30.3.0",
     "pm2": "^5.3.0",
+    "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
