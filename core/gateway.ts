@@ -75,6 +75,9 @@ class WhatsAppGateway {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private sock: any = null;
     private isReady: boolean = false;
+    // Track processed messages to prevent duplicates
+    private processedMessages: Set<string> = new Set();
+    private readonly MAX_PROCESSED_CACHE = 1000; // Keep last 1000 message IDs
 
     /**
      * Connect to WhatsApp
@@ -129,6 +132,23 @@ class WhatsAppGateway {
 
             for (const msg of messages) {
                 if (!msg.message || msg.key.fromMe) continue;
+
+                // Skip already processed messages (deduplication)
+                const messageId = msg.key.id;
+                if (messageId && this.processedMessages.has(messageId)) {
+                    logger.debug(`Skipping duplicate message: ${messageId}`);
+                    continue;
+                }
+                
+                // Track processed message
+                if (messageId) {
+                    this.processedMessages.add(messageId);
+                    // Clean up old messages to prevent memory leak
+                    if (this.processedMessages.size > this.MAX_PROCESSED_CACHE) {
+                        const firstItem = this.processedMessages.values().next().value;
+                        if (firstItem) this.processedMessages.delete(firstItem);
+                    }
+                }
 
                 const jid = msg.key.remoteJid;
                 if (!jid) continue;
