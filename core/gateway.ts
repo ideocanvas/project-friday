@@ -1,14 +1,14 @@
 /**
  * Friday Gateway - WhatsApp Message Handler
- * 
+ *
  * This is the primary interface for users to interact with Friday.
  * Handles receiving and sending messages via WhatsApp using Baileys.
  */
 
 import Baileys from '@whiskeysockets/baileys';
-const { 
-    useMultiFileAuthState, 
-    DisconnectReason, 
+const {
+    useMultiFileAuthState,
+    DisconnectReason,
     fetchLatestBaileysVersion,
     makeWASocket
 } = Baileys;
@@ -18,6 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
+import { processMessage as processWithLLM } from './message-processor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -168,19 +169,34 @@ class WhatsAppGateway {
     }
 
     /**
-     * Process incoming message
+     * Process incoming message using LLM
      */
     async processMessage(jid: string, text: string): Promise<string> {
-        // TODO: Implement full message processing
-        // 1. Load user profile
-        // 2. Load recent memory
-        // 3. Check for skill triggers
-        // 4. Call Local LLM
-        // 5. Return response
+        const phone = this.jidToPhone(jid);
         
-        // For now, return a simple response
+        // Save user message to memory
         this.appendMemory(jid, 'user', text);
-        return `I received your message: "${text}". Full processing coming soon!`;
+        
+        try {
+            // Process message with LLM
+            const result = await processWithLLM(phone, text);
+            
+            if (result.success && result.response) {
+                // Save assistant response to memory
+                this.appendMemory(jid, 'assistant', result.response);
+                return result.response;
+            } else {
+                logger.error('LLM processing failed:', result.error);
+                const fallbackResponse = "I'm sorry, I couldn't process your request. Please try again.";
+                this.appendMemory(jid, 'assistant', fallbackResponse);
+                return fallbackResponse;
+            }
+        } catch (error) {
+            logger.error('Error in message processing:', error);
+            const errorResponse = "I'm sorry, something went wrong. Please try again later.";
+            this.appendMemory(jid, 'assistant', errorResponse);
+            return errorResponse;
+        }
     }
 
     /**

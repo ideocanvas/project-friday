@@ -94,8 +94,11 @@ function checkReminders(): void {
                 const remTime = new Date(rem.time);
                 
                 if (now >= remTime) {
-                    console.log(`⏰ Triggering: ${rem.skill} for ${user} at ${remTime.toISOString()}`);
-                    executeSkill(rem.skill, user, rem.args || {});
+                    console.log(`⏰ Triggering reminder for ${user} at ${remTime.toISOString()}`);
+                    
+                    // Send reminder notification (no skill execution in phase 1)
+                    const message = rem.args?.message || `Reminder: ${rem.skill}`;
+                    queueMessage(user, String(message));
                     
                     // Keep if recurring, remove if one-time
                     if (rem.repeat) {
