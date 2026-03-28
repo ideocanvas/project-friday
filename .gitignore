@@ -33,6 +33,7 @@ gpu_active.lock
 
 # Queue (Runtime)
 queue/pending_messages.json
+queue/status.json
 queue/evolution/pending/*.json
 queue/evolution/processing/*.json
 !queue/.gitkeep
