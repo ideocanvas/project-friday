@@ -16,7 +16,7 @@ users/*/
 !users/.gitkeep
 
 # Generated Skills (AI-created)
-skills/generated/*/
+skills/generated/
 !skills/generated/.gitkeep
 
 # Web Portal (Expiring pages)
