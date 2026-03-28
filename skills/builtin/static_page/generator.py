@@ -45,6 +45,7 @@ class StaticPageGenerator:
         Auto-detect template based on data structure.
         
         | Data Pattern                            | Template                |
+        | Object with 'content' or 'sections'     | document.html           |
         | Array of objects with date + value      | chart.html (line chart) |
         | Array of objects with label + value      | chart.html (bar chart)  |
         | Array with headers + rows                | table.html              |
@@ -55,8 +56,12 @@ class StaticPageGenerator:
             return 'default'
         
         if isinstance(data, dict):
+            # Check for document/blog pattern
+            if 'content' in data or 'sections' in data or 'body' in data:
+                return 'document'
+            
             # Check for dashboard pattern
-            if 'widgets' in data or 'sections' in data:
+            if 'widgets' in data:
                 return 'dashboard'
             
             # Check for table pattern
@@ -124,6 +129,7 @@ class StaticPageGenerator:
             'table': self._get_table_template(),
             'list': self._get_list_template(),
             'dashboard': self._get_dashboard_template(),
+            'document': self._get_document_template(),
             'default': self._get_default_template()
         }
         
@@ -142,6 +148,20 @@ class StaticPageGenerator:
         # Replace timestamp
         result = result.replace('{{ timestamp }}', 
                                datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))
+        
+        # Handle conditional blocks: {% if key %}...{% endif %}
+        import re
+        def replace_conditional(match):
+            condition_key = match.group(1)
+            content = match.group(2)
+            # Check if condition is truthy in context
+            if condition_key in context and context[condition_key]:
+                return content
+            return ''
+        
+        # Match {% if key %}content{% endif %}
+        pattern = r'\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}'
+        result = re.sub(pattern, replace_conditional, result, flags=re.DOTALL)
         
         return result
     
@@ -411,6 +431,89 @@ class StaticPageGenerator:
 </body>
 </html>'''
     
+    def _get_document_template(self) -> str:
+        return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 15px; line-height: 1.2; }
+        .subtitle { font-size: 1.2em; opacity: 0.9; margin-bottom: 15px; }
+        .meta { font-size: 0.9em; opacity: 0.9; }
+        .meta span { margin: 0 10px; }
+        .author { font-weight: 600; }
+        .content { padding: 40px; }
+        h1, h2, h3, h4 { margin-top: 1.5em; margin-bottom: 0.5em; line-height: 1.3; }
+        h1 { font-size: 2em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+        h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+        h3 { font-size: 1.25em; }
+        p { margin-bottom: 1em; }
+        a { color: #667eea; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        ul, ol { margin: 1em 0; padding-left: 2em; }
+        li { margin-bottom: 0.5em; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 20px; border-radius: 8px; overflow-x: auto; margin: 1em 0; }
+        pre code { background: none; padding: 0; color: inherit; }
+        blockquote { border-left: 4px solid #667eea; padding-left: 20px; margin: 1em 0; color: #666; font-style: italic; }
+        table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        img { max-width: 100%; height: auto; border-radius: 8px; margin: 1em 0; }
+        .toc { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 1em 0; }
+        .toc h3 { margin-top: 0; margin-bottom: 1em; }
+        .toc ul { padding-left: 1.5em; }
+        .toc a { color: #333; }
+        .toc a:hover { color: #667eea; }
+        .footer { text-align: center; padding: 30px; color: #666; font-size: 0.85em; border-top: 1px solid #eee; }
+        @media (max-width: 600px) {
+            .header { padding: 40px 20px; }
+            .header h1 { font-size: 1.8em; }
+            .content { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ title }}</h1>
+            {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
+            <div class="meta">
+                {% if author %}<span class="author">By {{ author }}</span>{% endif %}
+                {% if date %}<span class="date">{{ date }}</span>{% endif %}
+                {% if tags %}<span class="tags">{{ tags }}</span>{% endif %}
+            </div>
+        </div>
+        <div class="content">
+            {% if toc %}<div class="toc"><h3>Table of Contents</h3>{{ toc }}</div>{% endif %}
+            {{ content }}
+        </div>
+        <div class="footer">Generated by Friday AI Assistant</div>
+    </div>
+</body>
+</html>'''
+    
     def prepare_chart_config(self, data: Any, title: str) -> Dict[str, Any]:
         """Prepare Chart.js configuration from data."""
         if isinstance(data, dict):
@@ -520,6 +623,105 @@ class StaticPageGenerator:
         }})();''')
         return '\n'.join(scripts)
     
+    def _render_document_content(self, data: Dict) -> str:
+        """Render document content with sections."""
+        content = data.get('content', data.get('body', ''))
+        
+        # If content is a string, treat as markdown-like text
+        if isinstance(content, str):
+            # Convert markdown-like syntax to HTML
+            content = self._markdown_to_html(content)
+            return content
+        
+        # If content is a list of sections
+        if isinstance(content, list):
+            sections_html = []
+            for section in content:
+                if isinstance(section, dict):
+                    section_title = section.get('title', '')
+                    section_body = section.get('content', section.get('body', ''))
+                    
+                    html = ''
+                    if section_title:
+                        html += f'<h2>{section_title}</h2>\n'
+                    if isinstance(section_body, str):
+                        html += self._markdown_to_html(section_body)
+                    elif isinstance(section_body, list):
+                        for item in section_body:
+                            html += f'<p>{item}</p>\n'
+                    else:
+                        html += f'<p>{section_body}</p>\n'
+                    sections_html.append(html)
+            return '\n'.join(sections_html)
+        
+        return str(content)
+    
+    def _markdown_to_html(self, text: str) -> str:
+        """Convert markdown-like text to HTML."""
+        import re
+        
+        # Convert headers
+        text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+        text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+        text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+        
+        # Convert bold and italic
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
+        
+        # Convert code blocks
+        text = re.sub(r'```(\w+)?\n(.+?)```', r'<pre><code class="\1">\2</code></pre>', text, flags=re.DOTALL)
+        text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+        
+        # Convert links
+        text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', text)
+        
+        # Convert unordered lists
+        lines = text.split('\n')
+        in_list = False
+        result_lines = []
+        for line in lines:
+            if line.strip().startswith('- '):
+                if not in_list:
+                    result_lines.append('<ul>')
+                    in_list = True
+                result_lines.append(f'<li>{line.strip()[2:]}</li>')
+            else:
+                if in_list:
+                    result_lines.append('</ul>')
+                    in_list = False
+                result_lines.append(line)
+        if in_list:
+            result_lines.append('</ul>')
+        text = '\n'.join(result_lines)
+        
+        # Convert paragraphs (double newline)
+        paragraphs = text.split('\n\n')
+        processed = []
+        for p in paragraphs:
+            p = p.strip()
+            if p and not p.startswith('<'):
+                processed.append(f'<p>{p}</p>')
+            else:
+                processed.append(p)
+        text = '\n'.join(processed)
+        
+        return text
+    
+    def _render_toc(self, toc_data: Any) -> str:
+        """Render table of contents."""
+        if isinstance(toc_data, list):
+            items = []
+            for item in toc_data:
+                if isinstance(item, dict):
+                    title = item.get('title', item.get('name', ''))
+                    anchor = item.get('anchor', title.lower().replace(' ', '-'))
+                    items.append(f'<li><a href="#{anchor}">{title}</a></li>')
+                else:
+                    items.append(f'<li>{item}</li>')
+            return '<ul>' + '\n'.join(items) + '</ul>'
+        return str(toc_data)
+    
     def generate(self, data: Any, user_id: str, template: str = 'auto',
                  title: str = 'Friday Page') -> Dict[str, Any]:
         """
@@ -589,6 +791,15 @@ class StaticPageGenerator:
             widgets = data.get('widgets', [])
             context['widgets'] = self._render_widgets(widgets)
             context['widget_scripts'] = self._render_widget_scripts(widgets)
+        elif template == 'document':
+            # Document/blog template
+            context['content'] = self._render_document_content(data)
+            context['author'] = data.get('author', '')
+            context['date'] = data.get('date', '')
+            context['tags'] = data.get('tags', '')
+            context['subtitle'] = data.get('subtitle', '')
+            if 'toc' in data:
+                context['toc'] = self._render_toc(data['toc'])
         else:
             # Default - render as table or message
             if isinstance(data, list) and data and isinstance(data[0], dict):
