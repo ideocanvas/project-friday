@@ -1,9 +1,9 @@
 {
   "friday-gateway": {
     "name": "friday-gateway",
-    "status": "stopped",
+    "status": "running",
     "pid": null,
-    "uptime": null,
+    "uptime": "2026-03-28T15:54:14.108Z",
     "memory": null,
     "cpu": null,
     "restarts": 0,

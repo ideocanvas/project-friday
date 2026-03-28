@@ -5,13 +5,12 @@
  * Handles receiving and sending messages via WhatsApp using Baileys.
  */
 
-import Baileys from '@whiskeysockets/baileys';
-const {
+import {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
     makeWASocket
-} = Baileys;
+} from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
@@ -19,6 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { processMessage as processWithLLM } from './message-processor.js';
+import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,15 +89,22 @@ class WhatsAppGateway {
         this.sock = makeWASocket({
             version,
             auth: state,
-            printQRInTerminal: true,  // Shows QR in console
             logger: pino({ level: 'silent' }),
             browser: ['Friday Bot', 'MacOS', '1.0.0'],
             markOnlineOnConnect: true
         });
 
         // Handle connection updates
-        this.sock.ev.on('connection.update', (update: { connection?: string; lastDisconnect?: { error?: Error } }) => {
-            const { connection, lastDisconnect } = update;
+        this.sock.ev.on('connection.update', (update: { connection?: string; lastDisconnect?: { error?: Error }; qr?: string }) => {
+            const { connection, lastDisconnect, qr } = update;
+            
+            // Handle QR code for authentication
+            if (qr) {
+                logger.info('📱 Scan the QR code below with WhatsApp to authenticate:');
+                console.log('\n');
+                qrcode.generate(qr, { small: true });
+                console.log('\n');
+            }
             
             if (connection === 'close') {
                 const shouldReconnect = (lastDisconnect?.error instanceof Boom)
@@ -359,6 +366,7 @@ async function main(): Promise<void> {
         await gateway.connect();
     } catch (error) {
         logger.error('Failed to start gateway:', error);
+        console.error('Full error details:', error);
         process.exit(1);
     }
 }
