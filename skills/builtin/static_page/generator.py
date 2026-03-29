@@ -18,6 +18,9 @@ try:
 except ImportError:
     JINJA2_AVAILABLE = False
 
+# Import image handler
+from image_handler import ImageHandler
+
 # Configuration
 WEB_PORTAL_PATH = os.getenv('WEB_PORTAL_PATH', './web_portal')
 CLOUDFLARE_TUNNEL_URL = os.getenv('CLOUDFLARE_TUNNEL_URL', '')
@@ -486,6 +489,8 @@ class StaticPageGenerator:
         .toc ul { padding-left: 1.5em; }
         .toc a { color: #333; }
         .toc a:hover { color: #667eea; }
+        .section-image { margin: 1.5em 0; text-align: center; }
+        .section-image img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         .footer { text-align: center; padding: 30px; color: #666; font-size: 0.85em; border-top: 1px solid #eee; }
         @media (max-width: 600px) {
             .header { padding: 40px 20px; }
@@ -623,7 +628,7 @@ class StaticPageGenerator:
         }})();''')
         return '\n'.join(scripts)
     
-    def _render_document_content(self, data: Dict) -> str:
+    def _render_document_content(self, data: Dict, image_handler: Optional[ImageHandler] = None) -> str:
         """Render document content with sections."""
         content = data.get('content', data.get('body', ''))
         
@@ -640,10 +645,20 @@ class StaticPageGenerator:
                 if isinstance(section, dict):
                     section_title = section.get('title', '')
                     section_body = section.get('content', section.get('body', ''))
+                    section_image = section.get('image')
                     
                     html = ''
                     if section_title:
                         html += f'<h2>{section_title}</h2>\n'
+                    
+                    # Handle image if present
+                    if section_image and image_handler:
+                        image_html, error = image_handler.process_image_field(section_image)
+                        if image_html:
+                            html += f'<figure class="section-image">{image_html}</figure>\n'
+                        if error:
+                            html += f'<!-- Image error: {error} -->\n'
+                    
                     if isinstance(section_body, str):
                         html += self._markdown_to_html(section_body)
                     elif isinstance(section_body, list):
@@ -755,6 +770,9 @@ class StaticPageGenerator:
         page_dir = user_dir / page_hash
         page_dir.mkdir(parents=True, exist_ok=True)
         
+        # Create image handler for this page
+        image_handler = ImageHandler(str(page_dir))
+        
         # Prepare context
         context = {
             'title': title,
@@ -792,8 +810,8 @@ class StaticPageGenerator:
             context['widgets'] = self._render_widgets(widgets)
             context['widget_scripts'] = self._render_widget_scripts(widgets)
         elif template == 'document':
-            # Document/blog template
-            context['content'] = self._render_document_content(data)
+            # Document/blog template - pass image_handler for image processing
+            context['content'] = self._render_document_content(data, image_handler)
             context['author'] = data.get('author', '')
             context['date'] = data.get('date', '')
             context['tags'] = data.get('tags', '')
