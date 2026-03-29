@@ -120,6 +120,33 @@ module.exports = {
             log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
             // Performance - Evolution can use more memory for LLM context
             max_memory_restart: '1G'
+        },
+
+        // ========================================
+        // 5. Web Server (Static Pages)
+        // ========================================
+        {
+            name: 'friday-web-server',
+            script: './dist/core/web-server.js',
+            cwd: './',
+            interpreter: 'none',
+            env: {
+                NODE_ENV: 'production',
+                WEB_PORTAL_ROOT: './web_portal',
+                WEB_SERVER_PORT: '3000',
+                WEB_SERVER_HOST: '0.0.0.0'
+            },
+            // Restart policy
+            autorestart: true,
+            watch: false,
+            max_restarts: 10,
+            min_uptime: '5s',
+            // Logging
+            out_file: './logs/web-server-out.log',
+            error_file: './logs/web-server-err.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+            // Performance
+            max_memory_restart: '200M'
         }
     ]
 };
