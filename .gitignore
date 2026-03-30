@@ -71,8 +71,15 @@ build/
 .env.local
 .env.*.local
 
-# Chrome Profile
+# Chrome Profile (ignore all Chrome profile data)
 skills/builtin/browser/chrome-profile/
+# Only keep the .gitkeep file
+!skills/builtin/browser/chrome-profile/.gitkeep
+
+# Test files
+test-*.png
+test-*.jpg
+scripts/test-*.mjs
 
 # Testing
 coverage/

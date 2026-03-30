@@ -2,20 +2,92 @@
   "skills": {
     "browser": {
       "name": "Live Browser",
-      "description": "Interact with websites, take screenshots, scrape data",
+      "description": "Interact with websites, take screenshots, scrape data, and discover page structure for LLM usability",
       "file": "/skills/builtin/browser/index.js",
       "type": "builtin",
       "parameters": {
         "action": {
           "type": "string",
-          "enum": ["goto", "screenshot", "scrape_text", "click", "fill", "evaluate", "wait_for_selector", "scroll_down"],
-          "required": true
+          "enum": [
+            "goto", "screenshot", "scrape_text", "click", "fill", "evaluate",
+            "wait_for_selector", "scroll_down", "get_url", "get_title",
+            "wait_for_navigation", "press", "status",
+            "get_html", "get_structure", "find_by_text", "get_links", "get_forms", "get_images", "get_table"
+          ],
+          "required": true,
+          "description": "Browser action to perform. Discovery actions (get_html, get_structure, find_by_text, get_links, get_forms, get_images, get_table) help understand page structure before using selectors."
         },
-        "url": { "type": "string" },
-        "selector": { "type": "string" },
-        "text": { "type": "string" },
-        "script": { "type": "string" },
-        "timeout": { "type": "number" }
+        "url": { 
+          "type": "string", 
+          "description": "URL to navigate to (required for goto action)" 
+        },
+        "selector": { 
+          "type": "string", 
+          "description": "CSS selector for element operations" 
+        },
+        "text": { 
+          "type": "string", 
+          "description": "Text to fill in input field (for fill action) or text to search for (for find_by_text action)" 
+        },
+        "script": { 
+          "type": "string", 
+          "description": "JavaScript code to execute (for evaluate action)" 
+        },
+        "timeout": { 
+          "type": "number", 
+          "default": 30000,
+          "description": "Timeout in milliseconds" 
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for screenshot file (without extension)"
+        },
+        "fullPage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture full page screenshot"
+        },
+        "pixels": {
+          "type": "number",
+          "default": 500,
+          "description": "Pixels to scroll (for scroll_down action)"
+        },
+        "key": {
+          "type": "string",
+          "description": "Key to press (for press action, e.g., 'Enter', 'Escape')"
+        },
+        "waitUntil": {
+          "type": "string",
+          "enum": ["load", "domcontentloaded", "networkidle"],
+          "default": "networkidle",
+          "description": "Wait condition for navigation"
+        },
+        "state": {
+          "type": "string",
+          "enum": ["attached", "detached", "visible", "hidden"],
+          "default": "visible",
+          "description": "State to wait for (for wait_for_selector action)"
+        },
+        "maxLength": {
+          "type": "number",
+          "default": 10000,
+          "description": "Max length of HTML to return (for get_html action)"
+        },
+        "types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["button", "a", "input", "select", "textarea", "h1", "h2", "h3", "img"],
+          "description": "Element types to include (for get_structure action)"
+        },
+        "exact": {
+          "type": "boolean",
+          "default": false,
+          "description": "Exact text match (for find_by_text action)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Element type to search (for find_by_text action, e.g., 'button', 'a')"
+        }
       }
     },
     "search": {
