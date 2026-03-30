@@ -26,6 +26,7 @@ interface Agent {
     name: string;
     description: string;
     system_prompt: string;
+    soul_file?: string;
     voice: string;
     personality: {
         tone: string;
@@ -44,7 +45,10 @@ interface UserProfile {
     phone: string;
     name?: string;
     agent?: string;
+    location?: string;
+    timezone?: string;
     preferences?: Record<string, unknown>;
+    first_interaction?: boolean;  // Track if name has been asked
     created_at: string;
     updated_at: string;
 }
@@ -79,6 +83,29 @@ export function loadAgents(): AgentsConfig {
     }
     
     return JSON.parse(fs.readFileSync(agentsPath, 'utf8')) as AgentsConfig;
+}
+
+/**
+ * Load soul.md content for an agent
+ */
+export function loadSoulContent(soulFile: string | undefined): string {
+    if (!soulFile) {
+        return '';
+    }
+    
+    const soulPath = path.join(process.cwd(), soulFile);
+    
+    if (!fs.existsSync(soulPath)) {
+        console.warn(`Soul file not found: ${soulFile}`);
+        return '';
+    }
+    
+    try {
+        return fs.readFileSync(soulPath, 'utf8');
+    } catch (error) {
+        console.error(`Error loading soul file ${soulFile}:`, error);
+        return '';
+    }
 }
 
 /**
@@ -140,6 +167,7 @@ export function createUserProfile(phone: string): UserProfile {
     
     const profile: UserProfile = {
         phone,
+        first_interaction: true,  // Mark as first interaction
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
     };
@@ -148,6 +176,75 @@ export function createUserProfile(phone: string): UserProfile {
     fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
     
     return profile;
+}
+
+/**
+ * Update user profile
+ */
+export function updateUserProfile(phone: string, updates: Partial<UserProfile>): UserProfile | null {
+    const profile = loadUserProfile(phone);
+    if (!profile) {
+        return null;
+    }
+    
+    const updatedProfile: UserProfile = {
+        ...profile,
+        ...updates,
+        updated_at: new Date().toISOString()
+    };
+    
+    const profilePath = path.join(USER_DATA_ROOT, phone, 'profile.json');
+    fs.writeFileSync(profilePath, JSON.stringify(updatedProfile, null, 2));
+    
+    return updatedProfile;
+}
+
+/**
+ * Check if the LLM response is asking for the user's name
+ * This helps detect when the first interaction greeting has been made
+ */
+export function isAskingForName(response: string): boolean {
+    const patterns = [
+        /what should i call you/i,
+        /what's your name/i,
+        /what is your name/i,
+        /how should i (address|call) you/i,
+        /may i (have|know) your name/i,
+        /your name is\?/i
+    ];
+    
+    return patterns.some(pattern => pattern.test(response));
+}
+
+/**
+ * Extract name from user's response
+ * Simple heuristic: if user says "I'm X", "My name is X", "Call me X", or just "X"
+ */
+export function extractNameFromResponse(message: string): string | null {
+    const patterns = [
+        /^(?:i'm|im|i am)\s+([a-zA-Z]+)/i,
+        /^my name is\s+([a-zA-Z]+)/i,
+        /^call me\s+([a-zA-Z]+)/i,
+        /^it's\s+([a-zA-Z]+)/i,
+        /^its\s+([a-zA-Z]+)/i,
+        /^this is\s+([a-zA-Z]+)/i,
+        // Single word response (likely just the name)
+        /^([a-zA-Z]+)$/i
+    ];
+    
+    for (const pattern of patterns) {
+        const match = message.trim().match(pattern);
+        if (match && match[1]) {
+            const name = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+            // Filter out common non-name words
+            const nonNames = ['yes', 'no', 'ok', 'okay', 'sure', 'hi', 'hello', 'hey', 'thanks', 'thank'];
+            if (!nonNames.includes(name.toLowerCase())) {
+                return name;
+            }
+        }
+    }
+    
+    return null;
 }
 
 /**
@@ -213,9 +310,29 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
 export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null): string {
     let systemPrompt = agent.system_prompt;
     
+    // Load soul content if available
+    const soulContent = loadSoulContent(agent.soul_file);
+    if (soulContent) {
+        // Insert soul content after the main system prompt
+        systemPrompt = soulContent;
+    }
+    
+    // Check if this is a first interaction (user has no name)
+    const isFirstInteraction = userProfile && !userProfile.name && userProfile.first_interaction !== false;
+    
+    // Add first interaction instruction if needed
+    if (isFirstInteraction) {
+        systemPrompt += `\n\n## IMPORTANT: First Interaction\n\nThis is your first conversation with this user. You do not know their name yet.\n\nYou MUST:\n1. Greet them warmly: "Hi! I'm ${agent.name}, your personal assistant."\n2. Immediately ask for their name: "What should I call you?"\n3. Wait for their response before proceeding with other tasks\n\nDo NOT ask for other information (location, preferences) yet. Only ask for their name.`;
+    }
+    
     // Add user context if available
     if (userProfile?.name) {
         systemPrompt += `\n\nThe user's name is ${userProfile.name}.`;
+    }
+    
+    // Add location if available
+    if (userProfile?.location) {
+        systemPrompt += `\nThe user is located in ${userProfile.location}.`;
     }
     
     // Add personality hints
@@ -239,6 +356,7 @@ export async function processMessage(
     try {
         // Load or create user profile
         let userProfile = loadUserProfile(phone);
+        const isNewUser = !userProfile;
         if (!userProfile) {
             userProfile = createUserProfile(phone);
         }
@@ -246,6 +364,22 @@ export async function processMessage(
         // Get agent
         const agentName = options?.agent || userProfile.agent || DEFAULT_AGENT;
         const agent = getAgent(agentName) || getDefaultAgent();
+        
+        // Check if this is a first interaction (user has no name yet)
+        const isFirstInteraction = !userProfile.name && userProfile.first_interaction !== false;
+        
+        // If user has no name and this is not their first message,
+        // try to extract name from their response
+        if (!userProfile.name && !isFirstInteraction) {
+            const extractedName = extractNameFromResponse(message);
+            if (extractedName) {
+                userProfile = updateUserProfile(phone, { 
+                    name: extractedName,
+                    first_interaction: false 
+                }) || userProfile;
+                console.log(`Extracted name "${extractedName}" for user ${phone}`);
+            }
+        }
         
         // Build system prompt
         const systemPrompt = buildSystemPrompt(agent, userProfile);
@@ -270,6 +404,12 @@ export async function processMessage(
                 success: false,
                 error: response.error,
             };
+        }
+        
+        // Check if this was a first interaction and the response is asking for name
+        // Mark first_interaction as false after the first response
+        if (isFirstInteraction && isAskingForName(response.content)) {
+            updateUserProfile(phone, { first_interaction: false });
         }
         
         return {
