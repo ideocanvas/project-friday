@@ -246,13 +246,16 @@ class WhatsAppGateway {
             const userProfile = loadUserProfile(phone);
             const userName = userProfile?.name || 'there';
             
+            // Load recent conversation history for context
+            const history = loadRecentMemory(phone);
+            
             // Get current date and time
             const now = new Date();
-            const currentDate = now.toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
+            const currentDate = now.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
             });
             const userTimezone = userProfile?.timezone || 'Asia/Hong_Kong';
             
@@ -261,48 +264,39 @@ class WhatsAppGateway {
             if (skillResultData?.data?.results && Array.isArray(skillResultData.data.results)) {
                 // Format the search results in a cleaner way for the LLM
                 const results = skillResultData.data.results as Array<{ title?: string; url?: string; snippet?: string }>;
-                const formattedResults = results.slice(0, 5).map((r, i) => 
+                const formattedResults = results.slice(0, 5).map((r, i) =>
                     `${i + 1}. ${r.title || 'Untitled'}\n   ${r.snippet || 'No description'}\n   Source: ${r.url || 'Unknown'}`
                 ).join('\n\n');
                 searchResultsContext = `Found ${results.length} results for "${originalQuery}":\n\n${formattedResults}`;
             }
             
             // Build a prompt for the LLM to process the skill results
-            const systemPrompt = `You are Friday, a helpful AI assistant. You just searched for information to help answer the user's question.
+            const systemPrompt = `You are Friday, a helpful AI assistant. You just executed a skill/action to help answer the user's question.
 
-The user's name is ${userName}.
-
-## Current Date
-
-Today's date is ${currentDate}.
-When answering questions about "today", "now", or current events, use this date as reference.
-If the search results contain outdated information, acknowledge this and provide the most relevant current information.
+The user's name is ${userName}. Today is ${currentDate}.
 
 ## Response Guidelines
 
-IMPORTANT: You must respond in plain, natural language. Do NOT return JSON. Do NOT return the raw search results. 
-Your response should be a friendly, conversational answer that synthesizes the information from the search results.
+Respond in plain, natural language. Be BRIEF - like you're texting a friend. 1-2 sentences max.
 
-- Answer the user's question directly and helpfully
-- Summarize the key information from the search results in your own words
-- Be concise but informative (2-4 sentences is usually enough)
-- If the search results don't fully answer the question, acknowledge this
-- Always respond as if you're having a conversation, not reading a list
-- Never include URLs or technical formatting in your response unless specifically asked
+- Answer directly based on the skill results
+- If there's an error, briefly say what went wrong
+- Don't list URLs or technical details
+- If the user confirmed something (like "Yes" or "2"), interpret it in context of the conversation
 
 User's question: "${originalQuery}"
 
-Search results:
+Skill results:
 ${searchResultsContext}
 
-Provide a helpful, conversational response:`;
+Your brief response:`;
 
-            // Call LLM with the skill results (no history needed for this synthesis task)
+            // Call LLM with the skill results AND conversation history for context
             const response = await processWithCustomPrompt(
                 systemPrompt,
-                [], // No history needed - we just want to synthesize the search results
-                `Please answer my question based on the search results.`,
-                { temperature: 0.7, maxTokens: 512 }
+                history, // Include conversation history so LLM understands context
+                `Please answer my question based on the skill results.`,
+                { temperature: 0.7, maxTokens: 150 }
             );
             
             if (response.success && response.response) {
