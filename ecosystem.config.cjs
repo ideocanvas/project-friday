@@ -1,5 +1,5 @@
 // PM2 Ecosystem Configuration for Project Friday
-// Run: pm2 start ecosystem.config.js
+// Run: pm2 start ecosystem.config.cjs
 // Note: Run 'npm run build' first to compile TypeScript
 
 module.exports = {
@@ -11,7 +11,8 @@ module.exports = {
             name: 'friday-gateway',
             script: './dist/core/gateway.js',
             cwd: './',
-            interpreter: 'none',  // Native ES modules
+            interpreter: 'node',
+            node_args: '--experimental-modules',
             env: {
                 NODE_ENV: 'production',
                 USER_DATA_ROOT: './users',
@@ -41,7 +42,7 @@ module.exports = {
             name: 'friday-scheduler',
             script: './dist/core/heartbeat.js',
             cwd: './',
-            interpreter: 'none',
+            interpreter: 'node',
             env: {
                 NODE_ENV: 'production',
                 USER_DATA_ROOT: './users',
@@ -69,7 +70,7 @@ module.exports = {
             name: 'friday-janitor',
             script: './dist/core/janitor.js',
             cwd: './',
-            interpreter: 'none',
+            interpreter: 'node',
             env: {
                 NODE_ENV: 'production',
                 WEB_PORTAL_ROOT: './web_portal',
@@ -95,7 +96,7 @@ module.exports = {
             name: 'friday-evolution',
             script: './dist/core/evolution.js',
             cwd: './',
-            interpreter: 'none',
+            interpreter: 'node',
             env: {
                 NODE_ENV: 'production',
                 USER_DATA_ROOT: './users',
@@ -129,7 +130,7 @@ module.exports = {
             name: 'friday-web-server',
             script: './dist/core/web-server.js',
             cwd: './',
-            interpreter: 'none',
+            interpreter: 'node',
             env: {
                 NODE_ENV: 'production',
                 WEB_PORTAL_ROOT: './web_portal',

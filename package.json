@@ -7,11 +7,11 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "start": "pm2 start ecosystem.config.js",
-    "stop": "pm2 stop all",
-    "restart": "pm2 restart all",
-    "logs": "pm2 logs",
-    "status": "pm2 status",
+    "start": "npx pm2 start ecosystem.config.cjs",
+    "stop": "npx pm2 stop all",
+    "restart": "npx pm2 restart all",
+    "logs": "npx pm2 logs",
+    "status": "npx pm2 status",
     "gateway": "node dist/core/gateway.js",
     "scheduler": "node dist/core/heartbeat.js",
     "janitor": "node dist/core/janitor.js",
@@ -21,9 +21,12 @@
     "dev:scheduler": "ts-node --esm core/heartbeat.ts",
     "dev:janitor": "ts-node --esm core/janitor.ts",
     "dev:evolution": "ts-node --esm core/evolution.ts",
+    "dev:web-server": "ts-node --esm core/web-server.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:pages": "node --loader ts-node/esm scripts/generate-test-pages.ts",
+    "test:cleanup": "node --loader ts-node/esm scripts/cleanup-test-pages.ts"
   },
   "keywords": [
     "ai",
