@@ -20,20 +20,30 @@
     },
     "search": {
       "name": "Google Search",
-      "description": "Search the web for current information, news, and data",
+      "description": "Search the web for current information, news, and data using Google Custom Search API",
       "file": "/skills/builtin/search/index.js",
       "type": "builtin",
       "parameters": {
         "action": {
           "type": "string",
-          "enum": ["search", "search_news", "search_images"],
-          "required": true
+          "enum": ["search", "search_news", "search_images", "status", "clear_cache"],
+          "required": true,
+          "description": "Action to perform"
         },
-        "query": { "type": "string", "required": true },
-        "numResults": { "type": "number" },
+        "query": {
+          "type": "string",
+          "description": "Search query (required for search actions)"
+        },
+        "numResults": {
+          "type": "number",
+          "default": 10,
+          "description": "Number of results to return (1-10)"
+        },
         "dateRange": {
           "type": "string",
-          "enum": ["day", "week", "month", "year"]
+          "enum": ["day", "week", "month", "year"],
+          "default": "week",
+          "description": "Date range for news search"
         }
       }
     },
