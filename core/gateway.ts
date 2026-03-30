@@ -17,8 +17,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
-import { processMessage as processWithLLM } from './message-processor.js';
+import { processMessage as processWithLLM, processWithCustomPrompt, loadRecentMemory } from './message-processor.js';
 import { processSkillAction } from './skill-executor.js';
+import { loadUserProfile } from './message-processor.js';
 import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -211,9 +212,12 @@ class WhatsAppGateway {
                 const skillResult = await processSkillAction(result.response, phone);
                 
                 if (skillResult.skillExecuted) {
-                    // Save skill result to memory
-                    this.appendMemory(jid, 'assistant', skillResult.response);
-                    return skillResult.response;
+                    // Skill was executed - send result back to LLM for natural language response
+                    const finalResponse = await this.processSkillResultWithLLM(phone, text, skillResult.response, skillResult.skillResult);
+                    
+                    // Save final response to memory
+                    this.appendMemory(jid, 'assistant', finalResponse);
+                    return finalResponse;
                 }
                 
                 // Save assistant response to memory
@@ -230,6 +234,59 @@ class WhatsAppGateway {
             const errorResponse = "I'm sorry, something went wrong. Please try again later.";
             this.appendMemory(jid, 'assistant', errorResponse);
             return errorResponse;
+        }
+    }
+
+    /**
+     * Process skill result with LLM to generate natural language response
+     */
+    async processSkillResultWithLLM(phone: string, originalQuery: string, skillResultMessage: string, skillResultData?: { success: boolean; data?: Record<string, unknown> }): Promise<string> {
+        try {
+            // Load user profile for context
+            const userProfile = loadUserProfile(phone);
+            const userName = userProfile?.name || 'there';
+            
+            // Build a prompt for the LLM to process the skill results
+            const systemPrompt = `You are Friday, a helpful AI assistant. You just executed a skill/action to help answer the user's question.
+
+The user's name is ${userName}.
+
+Your task is to provide a helpful, natural language response based on the skill results. 
+- Summarize the key information from the search results
+- Answer the user's question directly and conversationally
+- Be concise but informative
+- If the results don't directly answer the question, acknowledge this and provide what information is available
+- Do NOT just repeat the raw search results - synthesize them into a helpful answer
+
+Original user question: "${originalQuery}"
+
+Skill results:
+${skillResultMessage}
+
+Provide a natural, conversational response to the user:`;
+
+            // Load recent memory for context
+            const history = loadRecentMemory(phone);
+            
+            // Call LLM with the skill results
+            const response = await processWithCustomPrompt(
+                systemPrompt,
+                history,
+                `Based on the search results above, please answer my question: ${originalQuery}`,
+                { temperature: 0.7, maxTokens: 1024 }
+            );
+            
+            if (response.success && response.response) {
+                return response.response;
+            } else {
+                // Fallback to the raw skill result if LLM fails
+                logger.warn('LLM processing of skill result failed, returning raw result');
+                return skillResultMessage;
+            }
+        } catch (error) {
+            logger.error('Error processing skill result with LLM:', error);
+            // Fallback to the raw skill result
+            return skillResultMessage;
         }
     }
 
