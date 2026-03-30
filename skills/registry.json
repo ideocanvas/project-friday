@@ -59,8 +59,8 @@
         "waitUntil": {
           "type": "string",
           "enum": ["load", "domcontentloaded", "networkidle"],
-          "default": "networkidle",
-          "description": "Wait condition for navigation"
+          "default": "load",
+          "description": "Wait condition for navigation. 'load' (default) waits for all resources; 'domcontentloaded' is faster but may miss JS content; 'networkidle' for SPAs"
         },
         "state": {
           "type": "string",

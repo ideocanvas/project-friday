@@ -21,6 +21,104 @@ const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const DEFAULT_AGENT = process.env.DEFAULT_AGENT || 'friday';
 const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES || '20', 10);
 
+// Cache for skills registry
+let skillsRegistryCache: SkillsRegistry | null = null;
+
+/**
+ * Load skills registry
+ */
+interface SkillParameter {
+    type: string;
+    description?: string;
+    enum?: string[];
+    required?: boolean;
+    default?: unknown;
+}
+
+interface SkillDefinition {
+    name: string;
+    description: string;
+    file: string;
+    type: 'builtin' | 'generated';
+    parameters: Record<string, SkillParameter>;
+}
+
+interface SkillsRegistry {
+    skills: Record<string, SkillDefinition>;
+    version: string;
+}
+
+function loadSkillsRegistry(): SkillsRegistry {
+    if (skillsRegistryCache) return skillsRegistryCache;
+    
+    const registryPath = path.join(process.cwd(), 'skills', 'registry.json');
+    
+    if (!fs.existsSync(registryPath)) {
+        console.warn('Skills registry not found at', registryPath);
+        return { skills: {}, version: '1.0.0' };
+    }
+    
+    skillsRegistryCache = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as SkillsRegistry;
+    return skillsRegistryCache!;
+}
+
+/**
+ * Generate skills documentation for system prompt
+ */
+function generateSkillsPrompt(): string {
+    const registry = loadSkillsRegistry();
+    const skills = Object.entries(registry.skills);
+    
+    if (skills.length === 0) {
+        return '';
+    }
+    
+    let prompt = '\n\n## Available Skills\n\n';
+    prompt += 'You have access to skills that let you take actions. When you decide to use a skill, respond with ONLY a JSON action block (no text before or after):\n\n';
+    
+    for (const [skillId, skill] of skills) {
+        prompt += `### ${skill.name} (${skillId})\n`;
+        prompt += `${skill.description}\n`;
+        
+        // Get the action parameter if it exists
+        const actionParam = skill.parameters.action;
+        if (actionParam && actionParam.enum) {
+            prompt += `\nAvailable actions: ${actionParam.enum.join(', ')}\n`;
+        }
+        
+        // Add specific examples based on skill type
+        if (skillId === 'browser') {
+            prompt += `\n**CRITICAL: Browser Workflow - ALWAYS use scrape_text after goto!**\n`;
+            prompt += `The browser requires TWO steps to get content:\n`;
+            prompt += `Step 1 - Navigate: {"action": "goto", "skill": "browser", "params": {"action": "goto", "url": "https://example.com"}}\n`;
+            prompt += `Step 2 - Extract content: {"action": "scrape_text", "skill": "browser", "params": {"action": "scrape_text"}}\n`;
+            prompt += `You MUST wait for goto to complete, then use scrape_text to get the page content.\n`;
+            prompt += `Alternative: Use screenshot to capture the page visually.\n\n`;
+        } else if (skillId === 'search') {
+            prompt += `\nExample: {"action": "search", "skill": "search", "params": {"action": "search", "query": "your search query"}}\n\n`;
+        } else if (skillId === 'static_page') {
+            prompt += `\nExample: {"action": "generate", "skill": "static_page", "params": {"action": "generate", "template": "chart", "data": {...}}}\n\n`;
+        } else {
+            prompt += `\nUsage: {"action": "<action>", "skill": "${skillId}", "params": {...}}\n\n`;
+        }
+    }
+    
+    prompt += '## How to Use Skills\n\n';
+    prompt += '**CRITICAL: When you want to use a skill, respond with ONLY the JSON block. No text before or after.**\n\n';
+    prompt += 'Example user: "What\'s the weather in Hong Kong?"\n';
+    prompt += 'Your response (only this, nothing else):\n';
+    prompt += '{"action": "goto", "skill": "browser", "params": {"action": "goto", "url": "https://www.hko.gov.hk/en/index.html"}}\n\n';
+    prompt += 'After goto completes, you will receive the page title and URL. Then you MUST use scrape_text:\n';
+    prompt += '{"action": "scrape_text", "skill": "browser", "params": {"action": "scrape_text"}}\n\n';
+    prompt += 'After the skill executes, you will receive the result and can then respond naturally.\n\n';
+    prompt += '## When to Use Which Skill\n\n';
+    prompt += '- **browser**: For real-time/live data (weather, stock prices, news sites). ALWAYS use goto first, then scrape_text.\n';
+    prompt += '- **search**: For finding information, research, getting multiple sources.\n\n';
+    prompt += 'If you cannot help with something, be honest about your limitations.';
+    
+    return prompt;
+}
+
 // Type definitions
 interface Agent {
     name: string;
@@ -316,6 +414,28 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
         // Insert soul content after the main system prompt
         systemPrompt = soulContent;
     }
+    
+    // Dynamically generate skills documentation from registry
+    const skillsPrompt = generateSkillsPrompt();
+    if (skillsPrompt) {
+        systemPrompt += skillsPrompt;
+    }
+    
+    // Add current date and time context
+    const now = new Date();
+    const currentDate = now.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+    });
+    const currentTime = now.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: userProfile?.timezone || 'Asia/Hong_Kong'
+    });
+    const userTimezone = userProfile?.timezone || 'Asia/Hong_Kong';
+    systemPrompt += `\n\n## Current Date and Time\n\nToday's date is ${currentDate}.\nThe current time is ${currentTime} (${userTimezone}).\n\nWhen answering questions about "today", "now", or current events, use this date as reference.`;
     
     // Check if this is a first interaction (user has no name)
     const isFirstInteraction = userProfile && !userProfile.name && userProfile.first_interaction !== false;

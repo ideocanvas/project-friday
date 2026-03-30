@@ -16,7 +16,10 @@ const __dirname = path.dirname(__filename);
 const DEFAULT_TIMEOUT = 30000;
 
 // Default wait condition for navigation
-const DEFAULT_WAIT_UNTIL = 'networkidle';
+// 'load' - waits for all resources (images, styles, scripts) to be loaded
+// This is a good balance between 'domcontentloaded' (too fast, misses JS content) 
+// and 'networkidle' (too slow, can timeout on sites with continuous analytics)
+const DEFAULT_WAIT_UNTIL = 'load';
 
 /**
  * Navigate to a URL

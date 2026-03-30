@@ -246,48 +246,113 @@ class WhatsAppGateway {
             const userProfile = loadUserProfile(phone);
             const userName = userProfile?.name || 'there';
             
+            // Get current date and time
+            const now = new Date();
+            const currentDate = now.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+            const userTimezone = userProfile?.timezone || 'Asia/Hong_Kong';
+            
+            // Extract actual search data if available
+            let searchResultsContext = skillResultMessage;
+            if (skillResultData?.data?.results && Array.isArray(skillResultData.data.results)) {
+                // Format the search results in a cleaner way for the LLM
+                const results = skillResultData.data.results as Array<{ title?: string; url?: string; snippet?: string }>;
+                const formattedResults = results.slice(0, 5).map((r, i) => 
+                    `${i + 1}. ${r.title || 'Untitled'}\n   ${r.snippet || 'No description'}\n   Source: ${r.url || 'Unknown'}`
+                ).join('\n\n');
+                searchResultsContext = `Found ${results.length} results for "${originalQuery}":\n\n${formattedResults}`;
+            }
+            
             // Build a prompt for the LLM to process the skill results
-            const systemPrompt = `You are Friday, a helpful AI assistant. You just executed a skill/action to help answer the user's question.
+            const systemPrompt = `You are Friday, a helpful AI assistant. You just searched for information to help answer the user's question.
 
 The user's name is ${userName}.
 
-Your task is to provide a helpful, natural language response based on the skill results. 
-- Summarize the key information from the search results
-- Answer the user's question directly and conversationally
-- Be concise but informative
-- If the results don't directly answer the question, acknowledge this and provide what information is available
-- Do NOT just repeat the raw search results - synthesize them into a helpful answer
+## Current Date
 
-Original user question: "${originalQuery}"
+Today's date is ${currentDate}.
+When answering questions about "today", "now", or current events, use this date as reference.
+If the search results contain outdated information, acknowledge this and provide the most relevant current information.
 
-Skill results:
-${skillResultMessage}
+## Response Guidelines
 
-Provide a natural, conversational response to the user:`;
+IMPORTANT: You must respond in plain, natural language. Do NOT return JSON. Do NOT return the raw search results. 
+Your response should be a friendly, conversational answer that synthesizes the information from the search results.
 
-            // Load recent memory for context
-            const history = loadRecentMemory(phone);
-            
-            // Call LLM with the skill results
+- Answer the user's question directly and helpfully
+- Summarize the key information from the search results in your own words
+- Be concise but informative (2-4 sentences is usually enough)
+- If the search results don't fully answer the question, acknowledge this
+- Always respond as if you're having a conversation, not reading a list
+- Never include URLs or technical formatting in your response unless specifically asked
+
+User's question: "${originalQuery}"
+
+Search results:
+${searchResultsContext}
+
+Provide a helpful, conversational response:`;
+
+            // Call LLM with the skill results (no history needed for this synthesis task)
             const response = await processWithCustomPrompt(
                 systemPrompt,
-                history,
-                `Based on the search results above, please answer my question: ${originalQuery}`,
-                { temperature: 0.7, maxTokens: 1024 }
+                [], // No history needed - we just want to synthesize the search results
+                `Please answer my question based on the search results.`,
+                { temperature: 0.7, maxTokens: 512 }
             );
             
             if (response.success && response.response) {
-                return response.response;
+                // Check if the response looks like JSON (which would indicate an error)
+                const trimmedResponse = response.response.trim();
+                if (trimmedResponse.startsWith('{') && trimmedResponse.includes('"success"')) {
+                    // LLM returned JSON instead of natural language - this shouldn't happen
+                    // but if it does, provide a fallback
+                    logger.warn('LLM returned JSON instead of natural language, providing fallback response');
+                    return this.generateFallbackResponse(originalQuery, skillResultMessage);
+                }
+                logger.info('Successfully processed skill result with LLM');
+                return trimmedResponse;
             } else {
-                // Fallback to the raw skill result if LLM fails
-                logger.warn('LLM processing of skill result failed, returning raw result');
-                return skillResultMessage;
+                // Fallback to a generated response
+                logger.warn('LLM processing of skill result failed, generating fallback response');
+                return this.generateFallbackResponse(originalQuery, skillResultMessage);
             }
         } catch (error) {
             logger.error('Error processing skill result with LLM:', error);
-            // Fallback to the raw skill result
-            return skillResultMessage;
+            // Fallback to a generated response
+            return this.generateFallbackResponse(originalQuery, skillResultMessage);
         }
+    }
+
+    /**
+     * Generate a fallback response when LLM processing fails
+     */
+    generateFallbackResponse(originalQuery: string, skillResultMessage: string): string {
+        // Extract key information from the search results
+        const lines = skillResultMessage.split('\n').filter(line => line.trim());
+        
+        // Find the query and result count
+        const queryMatch = skillResultMessage.match(/Found \d+ results for "([^"]+)"/);
+        const query = queryMatch ? queryMatch[1] : originalQuery;
+        
+        // Extract the first few result titles
+        const titles: string[] = [];
+        for (const line of lines) {
+            const titleMatch = line.match(/^\d+\.\s+\*\*(.+?)\*\*/);
+            if (titleMatch && titleMatch[1] && titles.length < 3) {
+                titles.push(titleMatch[1]);
+            }
+        }
+        
+        if (titles.length > 0) {
+            return `I found some information about "${query}". Here are the top results:\n\n${titles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nWould you like me to look up more specific information?`;
+        }
+        
+        return `I searched for "${query}" but couldn't find clear results. Could you try rephrasing your question?`;
     }
 
     /**
