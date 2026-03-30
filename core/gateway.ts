@@ -18,6 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { processMessage as processWithLLM } from './message-processor.js';
+import { processSkillAction } from './skill-executor.js';
 import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -173,15 +174,12 @@ class WhatsAppGateway {
                 await this.sock.sendPresenceUpdate('composing', jid);
 
                 try {
-                    // Process message
+                    // Process message (memory is saved inside processMessage)
                     const response = await this.processMessage(jid, text);
                     
                     // Send response
                     await this.sock.sendPresenceUpdate('paused', jid);
                     await this.sock.sendMessage(jid, { text: response });
-
-                    // Save to memory
-                    this.appendMemory(jid, 'assistant', response);
                 } catch (error) {
                     logger.error('Error processing message:', error);
                     await this.sock.sendMessage(jid, { text: 'Sorry, I encountered an error. Please try again.' });
@@ -209,11 +207,20 @@ class WhatsAppGateway {
             const result = await processWithLLM(phone, text);
             
             if (result.success && result.response) {
+                // Check if response contains a skill action
+                const skillResult = await processSkillAction(result.response, phone);
+                
+                if (skillResult.skillExecuted) {
+                    // Save skill result to memory
+                    this.appendMemory(jid, 'assistant', skillResult.response);
+                    return skillResult.response;
+                }
+                
                 // Save assistant response to memory
                 this.appendMemory(jid, 'assistant', result.response);
                 return result.response;
             } else {
-                logger.error('LLM processing failed:', result.error);
+                logger.error({ error: result.error }, 'LLM processing failed');
                 const fallbackResponse = "I'm sorry, I couldn't process your request. Please try again.";
                 this.appendMemory(jid, 'assistant', fallbackResponse);
                 return fallbackResponse;

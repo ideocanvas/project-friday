@@ -152,6 +152,7 @@ export function createUserProfile(phone: string): UserProfile {
 
 /**
  * Load recent memory/context for a user
+ * Ensures proper alternation between user and assistant messages
  */
 export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESSAGES): ChatMessage[] {
     const memoryPath = path.join(USER_DATA_ROOT, phone, 'memory.log');
@@ -162,9 +163,9 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
     
     try {
         const lines = fs.readFileSync(memoryPath, 'utf8').trim().split('\n');
-        const recentLines = lines.slice(-limit);
+        const recentLines = lines.slice(-limit * 2); // Get more to account for filtering
         
-        return recentLines
+        const messages = recentLines
             .map((line: string) => {
                 try {
                     const entry = JSON.parse(line) as { role: string; content: string };
@@ -177,6 +178,29 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
                 }
             })
             .filter((msg): msg is ChatMessage => msg !== null);
+        
+        // Ensure proper alternation - remove consecutive messages with same role
+        const alternated: ChatMessage[] = [];
+        for (const msg of messages) {
+            if (msg.role === 'system') {
+                alternated.push(msg);
+                continue;
+            }
+            
+            const lastMsg = alternated[alternated.length - 1];
+            if (!lastMsg || lastMsg.role !== msg.role) {
+                alternated.push(msg);
+            }
+            // Skip if same role as previous (duplicate)
+        }
+        
+        // Ensure the last message before the new user message is from assistant
+        // (or start with user message if empty)
+        while (alternated.length > 0 && alternated[alternated.length - 1]?.role === 'user') {
+            alternated.pop();
+        }
+        
+        return alternated.slice(-limit);
     } catch (error) {
         console.error(`Error loading memory for ${phone}:`, error);
         return [];

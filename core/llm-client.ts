@@ -102,7 +102,7 @@ export class LLMClient {
                 };
             };
 
-            const content = data.choices?.[0]?.message?.content || '';
+            const content = data.choices?.[0]?.message?.content?.trim() || '';
             const usage = data.usage ? {
                 promptTokens: data.usage.prompt_tokens,
                 completionTokens: data.usage.completion_tokens,
