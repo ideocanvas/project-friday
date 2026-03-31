@@ -6,13 +6,14 @@
  */
 
 import 'dotenv/config';
-import { 
-    isToolCallingEnabled, 
-    skillsToTools, 
-    parseToolCalls, 
+import {
+    isToolCallingEnabled,
+    skillsToTools,
+    parseToolCalls,
     formatToolResult,
+    toolCallToOpenAIFormat,
     ToolDefinition,
-    ToolCall 
+    ToolCall
 } from './tool-calling.js';
 
 // Configuration from environment
@@ -100,7 +101,7 @@ export class LLMClient {
                     messages: validMessages.map(m => ({
                         role: m.role,
                         content: m.content,
-                        ...(m.tool_calls && { tool_calls: m.tool_calls }),
+                        ...(m.tool_calls && { tool_calls: m.tool_calls.map(tc => toolCallToOpenAIFormat(tc)) }),
                         ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
                     })),
                     temperature,
@@ -277,7 +278,7 @@ export class LLMClient {
                     messages: validMessages.map(m => ({
                         role: m.role,
                         content: m.content,
-                        ...(m.tool_calls && { tool_calls: m.tool_calls }),
+                        ...(m.tool_calls && { tool_calls: m.tool_calls.map(tc => toolCallToOpenAIFormat(tc)) }),
                         ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
                     })),
                     tools: tools,

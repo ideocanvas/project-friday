@@ -342,3 +342,26 @@ export function getToolFormatName(): string {
   const provider = getAIProvider();
   return provider === 'ollama' ? 'Ollama function calling' : 'OpenAI-style tools';
 }
+
+/**
+ * Converts a ToolCall back to the OpenAI API wire format for inclusion
+ * in an assistant message.  The LLM API expects:
+ *   { id, type: "function", function: { name, arguments: "<json string>" } }
+ * but our internal ToolCall stores { id, name, arguments: {…} }.
+ */
+export function toolCallToOpenAIFormat(tc: ToolCall): {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+} {
+  return {
+    id: tc.id,
+    type: 'function',
+    function: {
+      name: tc.name,
+      arguments: typeof tc.arguments === 'string'
+        ? tc.arguments
+        : JSON.stringify(tc.arguments),
+    },
+  };
+}

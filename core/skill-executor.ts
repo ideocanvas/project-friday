@@ -212,12 +212,15 @@ export async function executeSkill(
         };
     }
     
-    const skillFile = path.join(process.cwd(), skill.file);
+    // Use path.resolve instead of path.join: skill.file may already be absolute
+    // (loadRegistry resolves it to an absolute path). path.join would concatenate
+    // two absolute paths producing an invalid double-joined path.
+    const skillFile = path.resolve(process.cwd(), skill.file);
     
     if (!fs.existsSync(skillFile)) {
         return {
             success: false,
-            message: `Skill file not found: ${skill.file}`,
+            message: `Skill file not found: ${skillFile}`,
         };
     }
     

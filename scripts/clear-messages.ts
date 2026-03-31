@@ -70,7 +70,7 @@ function parseArgs(): { user?: string; all: boolean; keep: number; yes: boolean 
                 all = true;
                 break;
             case '--keep':
-                keep = parseInt(args[++i], 10);
+                keep = parseInt(args[++i]!, 10);
                 if (isNaN(keep) || keep < 0) {
                     console.error('❌ --keep must be a non-negative integer');
                     process.exit(1);
@@ -163,9 +163,9 @@ function getUserInfo(phone: string): UserInfo {
             info.messageCount = lines.length;
 
             if (lines.length > 0) {
-                const first = JSON.parse(lines[0]) as MemoryEntry;
+                const first = JSON.parse(lines[0]!) as MemoryEntry;
                 info.firstMessage = first.timestamp;
-                const last = JSON.parse(lines[lines.length - 1]) as MemoryEntry;
+                const last = JSON.parse(lines[lines.length - 1]!) as MemoryEntry;
                 info.lastMessage = last.timestamp;
             }
         } catch {
@@ -238,7 +238,7 @@ async function selectUser(users: string[]): Promise<string> {
         process.exit(1);
     }
 
-    return users[index];
+    return users[index]!;
 }
 
 /**

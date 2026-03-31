@@ -322,6 +322,48 @@ export function isAskingForName(response: string): boolean {
 }
 
 /**
+ * Check if the LLM response is asking for the user's location
+ */
+export function isAskingForLocation(response: string): boolean {
+    const patterns = [
+        /where are you/i,
+        /where are you located/i,
+        /what's your location/i,
+        /what is your location/i,
+        /your location/i,
+        /where do you live/i,
+        /where are you based/i,
+        /what city/i,
+        /which city/i,
+        /what country/i,
+        /which country/i,
+        /where are you based/i,
+    ];
+    
+    return patterns.some(pattern => pattern.test(response));
+}
+
+/**
+ * Extract location from user's response
+ * Simple heuristic: short, non-question responses are likely locations
+ */
+export function extractLocationFromResponse(message: string): string | null {
+    const trimmed = message.trim();
+    
+    // If the message is too long, it's probably not just a location
+    if (trimmed.length > 100) return null;
+    
+    // If it looks like a question, it's not a location
+    if (trimmed.endsWith('?')) return null;
+    
+    // Common non-location responses
+    const nonLocations = ['yes', 'no', 'ok', 'okay', 'sure', 'hi', 'hello', 'hey', 'thanks', 'thank', 'please', 'maybe', 'good', 'bad', 'fine', 'great'];
+    if (nonLocations.includes(trimmed.toLowerCase())) return null;
+    
+    return trimmed;
+}
+
+/**
  * Extract name from user's response
  * Simple heuristic: if user says "I'm X", "My name is X", "Call me X", or just "X"
  */
@@ -517,6 +559,19 @@ export async function processMessage(
         
         // Load recent context
         const history = loadRecentMemory(phone);
+        
+        // Check if the last assistant message was asking for location
+        // and the user doesn't already have a location saved
+        if (!userProfile.location && history.length > 0) {
+            const lastMsg = history[history.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant' && isAskingForLocation(lastMsg.content)) {
+                const extractedLocation = extractLocationFromResponse(message);
+                if (extractedLocation) {
+                    userProfile = updateUserProfile(phone, { location: extractedLocation }) || userProfile;
+                    console.log(`Extracted location "${extractedLocation}" for user ${phone}`);
+                }
+            }
+        }
         
         // Check if tool calling mode is enabled
         const useToolCalling = isToolCallingEnabled();
