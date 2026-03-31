@@ -14,13 +14,8 @@ module.exports = {
             interpreter: 'node',
             node_args: '--experimental-modules',
             env: {
-                NODE_ENV: 'production',
-                USER_DATA_ROOT: './users',
-                WEB_PORTAL_ROOT: './web_portal',
-                QUEUE_PATH: './queue',
-                AI_PROVIDER: 'lmstudio',
-                AI_BASE_URL: 'http://localhost:1234/v1',
-                CHAT_MODEL: 'qwen/qwen3.5-35b-a3b'
+                NODE_ENV: 'production'
+                // Other env vars loaded from .env file via dotenv in code
             },
             // Restart policy
             autorestart: true,

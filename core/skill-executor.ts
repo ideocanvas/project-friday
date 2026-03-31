@@ -81,8 +81,28 @@ export function listSkills(): string[] {
 /**
  * Parse LLM response for skill action blocks
  * Looks for JSON blocks like: {"action": "search", "skill": "search", "params": {...}}
+ * Also handles double-brace format: {{"action": ...}} which some LLMs produce
  */
 export function parseSkillAction(response: string): SkillAction | null {
+    // Handle double-brace format {{...}} that some LLMs produce
+    // The inner content might be: {"action": ...} OR just "action": ... (without outer braces)
+    const doubleBraceMatch = response.match(/\{\{([\s\S]*?)\}\}/);
+    if (doubleBraceMatch && doubleBraceMatch[1]) {
+        try {
+            let innerContent = doubleBraceMatch[1].trim();
+            // If the inner content doesn't start with {, wrap it
+            if (!innerContent.startsWith('{')) {
+                innerContent = '{' + innerContent + '}';
+            }
+            const parsed = JSON.parse(innerContent) as SkillAction;
+            if (parsed.action && parsed.skill) {
+                return parsed;
+            }
+        } catch {
+            // Fall through to single brace parsing
+        }
+    }
+    
     // Find all potential JSON objects in the response
     // Look for patterns that start with { and contain "action" and "skill" keys
     const startIndex = response.indexOf('{');
@@ -246,12 +266,17 @@ export async function processSkillAction(
     }
     
     console.log(`[Skill] Executing ${action.skill}.${action.params.action || 'default'} for user ${userId}`);
+    console.log(`[Skill] Input params:`, JSON.stringify(action.params, null, 2));
     
     // Execute the skill
     const result = await executeSkill(action.skill, action.params, userId);
     
     if (result.success) {
         console.log(`[Skill] ${action.skill} executed successfully`);
+        console.log(`[Skill] Output:`, result.message.substring(0, 500) + (result.message.length > 500 ? '...' : ''));
+        if (result.data) {
+            console.log(`[Skill] Data keys:`, Object.keys(result.data));
+        }
     } else {
         console.error(`[Skill] ${action.skill} failed:`, result.message);
     }

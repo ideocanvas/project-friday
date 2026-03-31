@@ -60,6 +60,16 @@ export class LLMClient {
         const timeoutMs = timeout || this.defaultTimeout;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+        // Log LLM request
+        console.log('[LLM] Sending request:');
+        console.log(`[LLM] Model: ${this.model}`);
+        console.log(`[LLM] Temperature: ${temperature}, MaxTokens: ${maxTokens}`);
+        console.log('[LLM] Messages:');
+        messages.forEach((m, i) => {
+            const contentPreview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;
+            console.log(`[LLM]   [${i}] ${m.role}: ${contentPreview}`);
+        });
+
         try {
             const response = await fetch(`${this.baseUrl}/chat/completions`, {
                 method: 'POST',
@@ -82,6 +92,7 @@ export class LLMClient {
 
             if (!response.ok) {
                 const errorText = await response.text();
+                console.log(`[LLM] API error: ${response.status} - ${errorText}`);
                 return {
                     content: '',
                     success: false,
@@ -109,6 +120,12 @@ export class LLMClient {
                 totalTokens: data.usage.total_tokens,
             } : undefined;
 
+            // Log LLM response
+            console.log('[LLM] Response received:');
+            console.log(`[LLM] Success: true, Tokens: ${usage?.totalTokens || 'N/A'} (prompt: ${usage?.promptTokens || 'N/A'}, completion: ${usage?.completionTokens || 'N/A'})`);
+            const responsePreview = content.length > 500 ? content.substring(0, 500) + '...' : content;
+            console.log(`[LLM] Content: ${responsePreview}`);
+
             return {
                 content,
                 success: true,
@@ -117,8 +134,12 @@ export class LLMClient {
         } catch (error) {
             clearTimeout(timeoutId);
             
+            // Log LLM error
+            console.log('[LLM] Error occurred:');
             if (error instanceof Error) {
+                console.log(`[LLM] Error: ${error.name} - ${error.message}`);
                 if (error.name === 'AbortError') {
+                    console.log(`[LLM] Request timed out after ${timeoutMs}ms`);
                     return {
                         content: '',
                         success: false,
@@ -132,6 +153,7 @@ export class LLMClient {
                 };
             }
             
+            console.log('[LLM] Unknown error occurred');
             return {
                 content: '',
                 success: false,
