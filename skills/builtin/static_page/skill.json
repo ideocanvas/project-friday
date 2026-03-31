@@ -1,0 +1,18 @@
+{
+  "id": "static_page",
+  "name": "Static Page Generator",
+  "description": "Generate shareable HTML pages for data, charts, and tables",
+  "file": "index.py",
+  "type": "builtin",
+  "prompt": "Example: {\"action\": \"generate\", \"skill\": \"static_page\", \"params\": {\"action\": \"generate\", \"template\": \"chart\", \"data\": {...}}}",
+  "parameters": {
+    "action": {
+      "type": "string",
+      "enum": ["generate", "generate_from_template", "list_pages"],
+      "required": true
+    },
+    "data": { "type": "object" },
+    "template": { "type": "string" },
+    "user_id": { "type": "string" }
+  }
+}

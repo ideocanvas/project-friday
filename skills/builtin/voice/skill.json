@@ -1,0 +1,18 @@
+{
+  "id": "voice",
+  "name": "Voice (STT/TTS)",
+  "description": "Convert voice to text (STT) and text to voice (TTS) using MLX-Audio",
+  "file": "index.py",
+  "type": "builtin",
+  "prompt": "Usage: {\"action\": \"<action>\", \"skill\": \"voice\", \"params\": {\"action\": \"transcribe|speak|voices\", ...}}",
+  "parameters": {
+    "action": {
+      "type": "string",
+      "enum": ["transcribe", "speak", "voices"],
+      "required": true
+    },
+    "audio_path": { "type": "string" },
+    "text": { "type": "string" },
+    "voice": { "type": "string" }
+  }
+}

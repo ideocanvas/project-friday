@@ -1,0 +1,29 @@
+{
+  "id": "vision",
+  "name": "Vision",
+  "description": "Analyze images using a vision model. Can describe image content, answer questions about images, perform OCR, and analyze multiple images at once. Use this skill when you need to understand visual content from screenshots, photos, or any image files.",
+  "file": "index.py",
+  "type": "builtin",
+  "prompt": "**Vision Skill - Image Analysis**\nUse this skill to analyze images, screenshots, or photos.\nActions:\n- analyze: Answer a specific question about an image\n- describe: Get a detailed description of an image\n- ocr: Extract text from images\n- status: Check if vision model is available\n\nExamples:\n{\"action\": \"analyze\", \"skill\": \"vision\", \"params\": {\"action\": \"analyze\", \"image_path\": \"/path/to/image.png\", \"query\": \"What do you see?\"}}\n{\"action\": \"describe\", \"skill\": \"vision\", \"params\": {\"action\": \"describe\", \"image_path\": \"/path/to/screenshot.png\"}}\n{\"action\": \"ocr\", \"skill\": \"vision\", \"params\": {\"action\": \"ocr\", \"image_path\": \"/path/to/document.png\"}}\n\n**Workflow with Browser:**\n1. Use browser screenshot to capture a page\n2. Use vision skill to analyze the screenshot",
+  "parameters": {
+    "action": {
+      "type": "string",
+      "enum": ["analyze", "describe", "ocr", "status"],
+      "required": true,
+      "description": "Action to perform: 'analyze' answers a question about an image, 'describe' provides a detailed description, 'ocr' extracts text from images, 'status' checks vision model availability"
+    },
+    "image_path": {
+      "type": "string",
+      "description": "Path to a single image file (for analyze, describe, ocr actions)"
+    },
+    "image_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Array of image file paths for analyzing multiple images at once"
+    },
+    "query": {
+      "type": "string",
+      "description": "Question to ask about the image (required for analyze action, optional for describe to focus on specific aspects)"
+    }
+  }
+}

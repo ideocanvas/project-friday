@@ -63,19 +63,6 @@ interface TestResult {
     error?: string;
 }
 
-interface SkillRegistry {
-    skills: Record<string, {
-        name: string;
-        description: string;
-        file: string;
-        type: string;
-        generated_by: string;
-        user_id: string;
-        created_at: string;
-        version: string;
-    }>;
-}
-
 interface StatusData {
     'friday-evolution': {
         status: string;
@@ -375,16 +362,21 @@ if __name__ == "__main__":
 }
 
 /**
- * Register skill in registry
+ * Register skill by writing its own skill.json in the generated skills directory.
+ * Each skill is self-contained — no monolithic registry needed.
  */
 function registerSkill(skillName: string, job: EvolutionJob): void {
-    const registryPath = path.join(SKILLS_PATH, 'registry.json');
-    const registry: SkillRegistry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+    const skillDir = path.join(SKILLS_PATH, 'generated', skillName);
     
-    registry.skills[skillName] = {
+    if (!fs.existsSync(skillDir)) {
+        fs.mkdirSync(skillDir, { recursive: true });
+    }
+    
+    const skillJson = {
+        id: skillName,
         name: skillName,
         description: job.request,
-        file: `/skills/generated/${skillName}.py`,
+        file: `${skillName}.py`,
         type: 'generated',
         generated_by: 'evolution',
         user_id: job.user_id,
@@ -392,7 +384,8 @@ function registerSkill(skillName: string, job: EvolutionJob): void {
         version: '1.0.0'
     };
     
-    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+    const skillJsonPath = path.join(skillDir, 'skill.json');
+    fs.writeFileSync(skillJsonPath, JSON.stringify(skillJson, null, 2));
 }
 
 /**

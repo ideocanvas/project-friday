@@ -1,0 +1,31 @@
+{
+  "id": "search",
+  "name": "Google Search",
+  "description": "Search the web for current information, news, and data using Google Custom Search API",
+  "file": "index.js",
+  "type": "builtin",
+  "prompt": "Example: {\"action\": \"search\", \"skill\": \"search\", \"params\": {\"action\": \"search\", \"query\": \"your search query\"}}",
+  "parameters": {
+    "action": {
+      "type": "string",
+      "enum": ["search", "search_news", "search_images", "status", "clear_cache"],
+      "required": true,
+      "description": "Action to perform"
+    },
+    "query": {
+      "type": "string",
+      "description": "Search query (required for search actions)"
+    },
+    "numResults": {
+      "type": "number",
+      "default": 10,
+      "description": "Number of results to return (1-10)"
+    },
+    "dateRange": {
+      "type": "string",
+      "enum": ["day", "week", "month", "year"],
+      "default": "week",
+      "description": "Date range for news search"
+    }
+  }
+}

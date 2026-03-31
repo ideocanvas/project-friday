@@ -23,11 +23,10 @@ const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const DEFAULT_AGENT = process.env.DEFAULT_AGENT || 'friday';
 const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES || '20', 10);
 
-// Cache for skills registry
-let skillsRegistryCache: SkillsRegistry | null = null;
-
 /**
- * Load skills registry
+ * Load skills registry by scanning skill directories for skill.json files.
+ * Each skill folder (builtin or generated) contains its own self-contained skill.json.
+ * No cache — skills can be added/removed at runtime without restart.
  */
 interface SkillParameter {
     type: string;
@@ -42,6 +41,7 @@ interface SkillDefinition {
     description: string;
     file: string;
     type: 'builtin' | 'generated';
+    prompt?: string;
     parameters: Record<string, SkillParameter>;
 }
 
@@ -51,21 +51,43 @@ interface SkillsRegistry {
 }
 
 function loadSkillsRegistry(): SkillsRegistry {
-    if (skillsRegistryCache) return skillsRegistryCache;
+    const skills: Record<string, SkillDefinition> = {};
+    const skillsRoot = path.join(process.cwd(), 'skills');
     
-    const registryPath = path.join(process.cwd(), 'skills', 'registry.json');
+    // Scan both builtin and generated directories
+    const skillDirs = ['builtin', 'generated'];
     
-    if (!fs.existsSync(registryPath)) {
-        console.warn('Skills registry not found at', registryPath);
-        return { skills: {}, version: '1.0.0' };
+    for (const dir of skillDirs) {
+        const dirPath = path.join(skillsRoot, dir);
+        if (!fs.existsSync(dirPath)) continue;
+        
+        try {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                
+                const skillJsonPath = path.join(dirPath, entry.name, 'skill.json');
+                if (!fs.existsSync(skillJsonPath)) continue;
+                
+                try {
+                    const skillDef = JSON.parse(fs.readFileSync(skillJsonPath, 'utf8')) as SkillDefinition & { id?: string };
+                    const skillId = skillDef.id || entry.name;
+                    skills[skillId] = skillDef;
+                } catch (err) {
+                    console.warn(`Failed to load skill.json from ${skillJsonPath}:`, err);
+                }
+            }
+        } catch (err) {
+            console.warn(`Failed to scan skills directory ${dirPath}:`, err);
+        }
     }
     
-    skillsRegistryCache = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as SkillsRegistry;
-    return skillsRegistryCache!;
+    return { skills, version: '2.0.0' };
 }
 
 /**
  * Generate skills documentation for system prompt
+ * Reads the `prompt` field from each skill in the registry — skills are self-contained.
  */
 function generateSkillsPrompt(): string {
     const registry = loadSkillsRegistry();
@@ -88,34 +110,9 @@ function generateSkillsPrompt(): string {
             prompt += `\nAvailable actions: ${actionParam.enum.join(', ')}\n`;
         }
         
-        // Add specific examples based on skill type
-        if (skillId === 'browser') {
-            prompt += `\n**CRITICAL: Browser Workflow - ALWAYS use scrape_text after goto!**\n`;
-            prompt += `The browser requires TWO steps to get content:\n`;
-            prompt += `Step 1 - Navigate: {"action": "goto", "skill": "browser", "params": {"action": "goto", "url": "https://example.com"}}\n`;
-            prompt += `Step 2 - Extract content: {"action": "scrape_text", "skill": "browser", "params": {"action": "scrape_text"}}\n`;
-            prompt += `You MUST wait for goto to complete, then use scrape_text to get the page content.\n`;
-            prompt += `Alternative: Use screenshot to capture the page visually.\n`;
-            prompt += `Note: screenshot returns a file path. Use the vision skill to analyze the screenshot.\n\n`;
-        } else if (skillId === 'search') {
-            prompt += `\nExample: {"action": "search", "skill": "search", "params": {"action": "search", "query": "your search query"}}\n\n`;
-        } else if (skillId === 'static_page') {
-            prompt += `\nExample: {"action": "generate", "skill": "static_page", "params": {"action": "generate", "template": "chart", "data": {...}}}\n\n`;
-        } else if (skillId === 'vision') {
-            prompt += `\n**Vision Skill - Image Analysis**\n`;
-            prompt += `Use this skill to analyze images, screenshots, or photos.\n`;
-            prompt += `Actions:\n`;
-            prompt += `- analyze: Answer a specific question about an image\n`;
-            prompt += `- describe: Get a detailed description of an image\n`;
-            prompt += `- ocr: Extract text from images\n`;
-            prompt += `- status: Check if vision model is available\n\n`;
-            prompt += `Examples:\n`;
-            prompt += `{"action": "analyze", "skill": "vision", "params": {"action": "analyze", "image_path": "/path/to/image.png", "query": "What do you see?"}}\n`;
-            prompt += `{"action": "describe", "skill": "vision", "params": {"action": "describe", "image_path": "/path/to/screenshot.png"}}\n`;
-            prompt += `{"action": "ocr", "skill": "vision", "params": {"action": "ocr", "image_path": "/path/to/document.png"}}\n\n`;
-            prompt += `**Workflow with Browser:**\n`;
-            prompt += `1. Use browser screenshot to capture a page\n`;
-            prompt += `2. Use vision skill to analyze the screenshot\n\n`;
+        // Use the self-contained prompt from the skill registry
+        if (skill.prompt) {
+            prompt += `\n${skill.prompt}\n\n`;
         } else {
             prompt += `\nUsage: {"action": "<action>", "skill": "${skillId}", "params": {...}}\n\n`;
         }
@@ -123,15 +120,7 @@ function generateSkillsPrompt(): string {
     
     prompt += '## How to Use Skills\n\n';
     prompt += '**CRITICAL: When you want to use a skill, respond with ONLY the JSON block. No text before or after.**\n\n';
-    prompt += 'Example user: "What\'s the weather in Hong Kong?"\n';
-    prompt += 'Your response (only this, nothing else):\n';
-    prompt += '{"action": "goto", "skill": "browser", "params": {"action": "goto", "url": "https://www.hko.gov.hk/en/index.html"}}\n\n';
-    prompt += 'After goto completes, you will receive the page title and URL. Then you MUST use scrape_text:\n';
-    prompt += '{"action": "scrape_text", "skill": "browser", "params": {"action": "scrape_text"}}\n\n';
     prompt += 'After the skill executes, you will receive the result and can then respond naturally.\n\n';
-    prompt += '## When to Use Which Skill\n\n';
-    prompt += '- **browser**: For real-time/live data (weather, stock prices, news sites). ALWAYS use goto first, then scrape_text.\n';
-    prompt += '- **search**: For finding information, research, getting multiple sources.\n\n';
     prompt += 'If you cannot help with something, be honest about your limitations.';
     
     return prompt;

@@ -44,24 +44,62 @@ interface SkillsRegistry {
     version: string;
 }
 
-// Cache for registry
-let registryCache: SkillsRegistry | null = null;
-
 /**
- * Load the skills registry
+ * Load the skills registry by scanning skill directories for skill.json files.
+ * Each skill folder (builtin or generated) contains its own self-contained skill.json.
+ * No cache — skills can be added/removed at runtime without restart.
  */
 function loadRegistry(): SkillsRegistry {
-    if (registryCache) return registryCache;
+    const skills: Record<string, RegistrySkill> = {};
+    const skillsRoot = path.join(process.cwd(), 'skills');
     
-    const registryPath = path.join(process.cwd(), 'skills', 'registry.json');
+    // Scan both builtin and generated directories
+    const skillDirs = ['builtin', 'generated'];
     
-    if (!fs.existsSync(registryPath)) {
-        console.warn('Skills registry not found at', registryPath);
-        return { skills: {}, version: '1.0.0' };
+    for (const dir of skillDirs) {
+        const dirPath = path.join(skillsRoot, dir);
+        if (!fs.existsSync(dirPath)) continue;
+        
+        try {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                
+                const skillJsonPath = path.join(dirPath, entry.name, 'skill.json');
+                if (!fs.existsSync(skillJsonPath)) continue;
+                
+                try {
+                    const skillDef = JSON.parse(fs.readFileSync(skillJsonPath, 'utf8')) as {
+                        id: string;
+                        name: string;
+                        description: string;
+                        file: string;
+                        type: 'builtin' | 'generated';
+                        parameters: Record<string, unknown>;
+                        [key: string]: unknown;
+                    };
+                    
+                    // Resolve file path relative to the skill directory
+                    const resolvedFile = path.join(dirPath, entry.name, skillDef.file);
+                    const skillId = skillDef.id || entry.name;
+                    
+                    skills[skillId] = {
+                        name: skillDef.name,
+                        description: skillDef.description,
+                        file: resolvedFile,
+                        type: skillDef.type,
+                        parameters: skillDef.parameters,
+                    };
+                } catch (err) {
+                    console.warn(`Failed to load skill.json from ${skillJsonPath}:`, err);
+                }
+            }
+        } catch (err) {
+            console.warn(`Failed to scan skills directory ${dirPath}:`, err);
+        }
     }
     
-    registryCache = JSON.parse(fs.readFileSync(registryPath, 'utf8')) as SkillsRegistry;
-    return registryCache!;
+    return { skills, version: '2.0.0' };
 }
 
 /**
