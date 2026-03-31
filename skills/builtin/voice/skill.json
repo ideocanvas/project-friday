@@ -1,18 +1,168 @@
 {
   "id": "voice",
   "name": "Voice (STT/TTS)",
-  "description": "Convert voice to text (STT) and text to voice (TTS) using MLX-Audio",
+  "version": "1.0.0",
+  "description": "Convert voice to text (STT) and text to voice (TTS) using MLX-Audio optimized for Apple Silicon. TTS uses Qwen3-TTS for voice cloning.",
   "file": "index.py",
   "type": "builtin",
-  "prompt": "Usage: {\"action\": \"<action>\", \"skill\": \"voice\", \"params\": {\"action\": \"transcribe|speak|voices\", ...}}",
+  "prompt": "Voice skill for speech recognition and synthesis. Usage: {\"action\": \"transcribe\", \"audio_path\": \"/path/to/audio.ogg\"} or {\"action\": \"speak\", \"text\": \"Hello world\"} or {\"action\": \"voices\"} or {\"action\": \"status\"}",
   "parameters": {
     "action": {
       "type": "string",
-      "enum": ["transcribe", "speak", "voices"],
-      "required": true
+      "enum": ["transcribe", "speak", "voices", "status"],
+      "required": true,
+      "description": "Action to perform: transcribe (STT), speak (TTS), voices (list available), status (check availability)"
     },
-    "audio_path": { "type": "string" },
-    "text": { "type": "string" },
-    "voice": { "type": "string" }
-  }
+    "audio_path": {
+      "type": "string",
+      "required": false,
+      "description": "Path to audio file for transcription. Supports .ogg, .wav, .mp3, .m4a formats. Required for 'transcribe' action."
+    },
+    "text": {
+      "type": "string",
+      "required": false,
+      "description": "Text to convert to speech. Required for 'speak' action."
+    },
+    "voice": {
+      "type": "string",
+      "required": false,
+      "default": "default",
+      "description": "Voice to use for TTS. For Qwen3-TTS, use 'default' for the built-in reference voice. Use 'voices' action to see available reference audio files."
+    },
+    "ref_audio": {
+      "type": "string",
+      "required": false,
+      "description": "Path to reference audio file for voice cloning (Qwen3-TTS only). Optional - uses default reference if not provided."
+    },
+    "ref_text": {
+      "type": "string",
+      "required": false,
+      "description": "Text corresponding to the reference audio (Qwen3-TTS only). Required if ref_audio is provided."
+    }
+  },
+  "returns": {
+    "transcribe": {
+      "success": "boolean",
+      "message": "string",
+      "data": {
+        "text": "transcribed text",
+        "language": "detected language code",
+        "duration": "audio duration in seconds",
+        "model": "STT model used"
+      }
+    },
+    "speak": {
+      "success": "boolean",
+      "message": "string",
+      "data": {
+        "audio_path": "path to generated audio file",
+        "duration": "audio duration in seconds",
+        "voice": "voice used (or 'cloned' for Qwen3)",
+        "model": "TTS model used",
+        "ref_audio": "reference audio used for cloning (if Qwen3)"
+      }
+    },
+    "voices": {
+      "success": "boolean",
+      "message": "string",
+      "data": {
+        "voices": ["list of available voices or reference audio files"],
+        "default": "default voice name"
+      }
+    },
+    "status": {
+      "success": "boolean",
+      "message": "string",
+      "data": {
+        "mlx_available": "boolean",
+        "mlx_audio_available": "boolean",
+        "metal_available": "boolean",
+        "stt_model": "configured STT model",
+        "tts_model": "configured TTS model",
+        "tts_model_type": "qwen3 or kokoro"
+      }
+    }
+  },
+  "environment": {
+    "STT_MODEL": {
+      "default": "mlx-community/whisper-small-mlx",
+      "description": "MLX Whisper model for speech-to-text"
+    },
+    "TTS_MODEL": {
+      "default": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+      "description": "MLX TTS model for text-to-speech. Qwen3-TTS uses voice cloning."
+    },
+    "TTS_VOICE": {
+      "default": "default",
+      "description": "Default voice for TTS. For Qwen3-TTS, use 'default'."
+    },
+    "TTS_LANG_CODE": {
+      "default": "zh",
+      "description": "Language code for TTS: 'en' for English, 'zh' for Chinese"
+    },
+    "TTS_REF_AUDIO": {
+      "default": "references/speaker01.wav",
+      "description": "Reference audio file for Qwen3-TTS voice cloning"
+    },
+    "TTS_REF_TEXT": {
+      "default": "是呀，他还想换个地球仪哈哈哈，看来给你积累了一些快乐值了，你还想不想再听一个其他的笑话呀？",
+      "description": "Reference text corresponding to the reference audio"
+    },
+    "TEMP_VOICE_PATH": {
+      "default": "/tmp/friday/voice",
+      "description": "Temporary directory for voice files"
+    },
+    "OUTPUT_TTS_PATH": {
+      "default": "/tmp/friday/tts",
+      "description": "Output directory for TTS audio files"
+    }
+  },
+  "dependencies": {
+    "required": [
+      "mlx",
+      "mlx-audio",
+      "mlx-whisper"
+    ],
+    "optional": [
+      "ffmpeg (for audio conversion)",
+      "soundfile (for audio file handling)"
+    ]
+  },
+  "examples": [
+    {
+      "description": "Transcribe a WhatsApp voice note",
+      "params": {
+        "action": "transcribe",
+        "audio_path": "/temp/voice/message.ogg"
+      }
+    },
+    {
+      "description": "Convert text to speech with default voice cloning",
+      "params": {
+        "action": "speak",
+        "text": "你好，今天天气怎么样？"
+      }
+    },
+    {
+      "description": "Convert text to speech with custom reference audio",
+      "params": {
+        "action": "speak",
+        "text": "你好，今天天气怎么样？",
+        "ref_audio": "/path/to/reference.wav",
+        "ref_text": "这是参考音频的文本内容"
+      }
+    },
+    {
+      "description": "List available voices/reference audio files",
+      "params": {
+        "action": "voices"
+      }
+    },
+    {
+      "description": "Check voice skill status",
+      "params": {
+        "action": "status"
+      }
+    }
+  ]
 }
