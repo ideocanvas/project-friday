@@ -561,8 +561,9 @@ export async function processMessage(
                 // Feed tool results back to LLM for final response
                 console.log('[MessageProcessor] Feeding tool results back to LLM');
                 
-                // Build conversation with tool results
-                const messagesWithTools: ChatMessage[] = [
+                // Build complete conversation with tool results
+                const messagesWithToolResults: ChatMessage[] = [
+                    { role: 'system', content: systemPrompt },
                     ...history,
                     { role: 'user', content: message },
                     { role: 'assistant', content: response.content, tool_calls: response.toolCalls },
@@ -573,16 +574,13 @@ export async function processMessage(
                     })),
                 ];
                 
-                // Get final response from LLM
-                const finalResponse = await llmClient.chatWithContext(
-                    systemPrompt,
-                    messagesWithTools.slice(0, -toolResultMessages.length), // History without tool results
-                    '', // Empty user message since we're continuing
-                    {
-                        temperature: options?.temperature ?? 0.7,
-                        maxTokens: options?.maxTokens ?? 2048,
-                    }
-                );
+                // Get final response from LLM using chatCompletion directly
+                // (not chatWithContext which adds an empty user message causing API 400 errors)
+                const finalResponse = await llmClient.chatCompletion({
+                    messages: messagesWithToolResults,
+                    temperature: options?.temperature ?? 0.7,
+                    maxTokens: options?.maxTokens ?? 2048,
+                });
                 
                 if (!finalResponse.success) {
                     // Return tool results if final response fails

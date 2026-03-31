@@ -67,6 +67,14 @@ export class LLMClient {
     async chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResponse> {
         const { messages, temperature = 0.7, maxTokens = 2048, timeout } = options;
         
+        // Filter out messages with empty content that would cause API errors.
+        // Keep tool messages (role=tool) and assistant messages with tool_calls even if content is empty.
+        const validMessages = messages.filter(m => {
+            if (m.role === 'tool') return true;  // tool results must always be included
+            if (m.tool_calls && m.tool_calls.length > 0) return true;  // assistant with tool_calls
+            return m.content && m.content.trim() !== '';
+        });
+        
         const controller = new AbortController();
         const timeoutMs = timeout || this.defaultTimeout;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -76,7 +84,7 @@ export class LLMClient {
         console.log(`[LLM] Model: ${this.model}`);
         console.log(`[LLM] Temperature: ${temperature}, MaxTokens: ${maxTokens}`);
         console.log('[LLM] Messages:');
-        messages.forEach((m, i) => {
+        validMessages.forEach((m, i) => {
             const contentPreview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;
             console.log(`[LLM]   [${i}] ${m.role}: ${contentPreview}`);
         });
@@ -89,7 +97,7 @@ export class LLMClient {
                 },
                 body: JSON.stringify({
                     model: this.model,
-                    messages: messages.map(m => ({
+                    messages: validMessages.map(m => ({
                         role: m.role,
                         content: m.content,
                         ...(m.tool_calls && { tool_calls: m.tool_calls }),
@@ -235,6 +243,14 @@ export class LLMClient {
     ): Promise<ChatCompletionResponse> {
         const { messages, tools, temperature = 0.7, maxTokens = 2048, timeout } = options;
         
+        // Filter out messages with empty content that would cause API errors.
+        // Keep tool messages (role=tool) and assistant messages with tool_calls even if content is empty.
+        const validMessages = messages.filter(m => {
+            if (m.role === 'tool') return true;  // tool results must always be included
+            if (m.tool_calls && m.tool_calls.length > 0) return true;  // assistant with tool_calls
+            return m.content && m.content.trim() !== '';
+        });
+        
         const controller = new AbortController();
         const timeoutMs = timeout || this.defaultTimeout;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -245,7 +261,7 @@ export class LLMClient {
         console.log(`[LLM] Temperature: ${temperature}, MaxTokens: ${maxTokens}`);
         console.log(`[LLM] Tools: ${tools.length} tool(s)`);
         console.log('[LLM] Messages:');
-        messages.forEach((m, i) => {
+        validMessages.forEach((m, i) => {
             const contentPreview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;
             console.log(`[LLM]   [${i}] ${m.role}: ${contentPreview}`);
         });
@@ -258,7 +274,7 @@ export class LLMClient {
                 },
                 body: JSON.stringify({
                     model: this.model,
-                    messages: messages.map(m => ({
+                    messages: validMessages.map(m => ({
                         role: m.role,
                         content: m.content,
                         ...(m.tool_calls && { tool_calls: m.tool_calls }),
