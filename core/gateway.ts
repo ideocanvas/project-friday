@@ -3,13 +3,15 @@
  *
  * This is the primary interface for users to interact with Friday.
  * Handles receiving and sending messages via WhatsApp using Baileys.
+ * Supports text, voice, and image messages.
  */
 
 import {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    makeWASocket
+    makeWASocket,
+    downloadMediaMessage
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -30,6 +32,7 @@ const ALLOWED_NUMBERS: string[] = (process.env.ALILED_NUMBERS || '').split(',').
 const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const QUEUE_PATH = process.env.QUEUE_PATH || './queue';
 const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
+const TEMP_MEDIA_PATH = process.env.TEMP_MEDIA_PATH || '/tmp/friday/media';
 
 // Logger
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -163,20 +166,42 @@ class WhatsAppGateway {
                     continue;
                 }
 
-                const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-                if (!text) continue;
-
-                logger.info(`📩 New message from ${jid}: ${text}`);
-
-                // Mark as read (blue checkmarks)
-                await this.sock.readMessages([msg.key]);
-
-                // Show typing indicator
-                await this.sock.sendPresenceUpdate('composing', jid);
-
+                // Determine message type and extract content
+                const messageType = this.getMessageType(msg.message);
+                
                 try {
-                    // Process message (memory is saved inside processMessage)
-                    const response = await this.processMessage(jid, text);
+                    let response: string;
+                    
+                    if (messageType === 'text') {
+                        // Handle text message
+                        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+                        if (!text) continue;
+                        
+                        logger.info(`📩 New text message from ${jid}: ${text}`);
+                        await this.sock.readMessages([msg.key]);
+                        await this.sock.sendPresenceUpdate('composing', jid);
+                        
+                        response = await this.processMessage(jid, text);
+                    } else if (messageType === 'audio') {
+                        // Handle voice/audio message
+                        logger.info(`🎤 New voice message from ${jid}`);
+                        await this.sock.readMessages([msg.key]);
+                        await this.sock.sendPresenceUpdate('composing', jid);
+                        
+                        response = await this.handleAudioMessage(jid, msg);
+                    } else if (messageType === 'image') {
+                        // Handle image message
+                        const caption = msg.message.imageMessage?.caption || '';
+                        logger.info(`🖼️ New image message from ${jid}${caption ? ` with caption: ${caption}` : ''}`);
+                        await this.sock.readMessages([msg.key]);
+                        await this.sock.sendPresenceUpdate('composing', jid);
+                        
+                        response = await this.handleImageMessage(jid, msg, caption);
+                    } else {
+                        // Unsupported message type
+                        logger.debug(`Ignoring unsupported message type: ${messageType}`);
+                        continue;
+                    }
                     
                     // Send response
                     await this.sock.sendPresenceUpdate('paused', jid);
@@ -234,6 +259,265 @@ class WhatsAppGateway {
             const errorResponse = "I'm sorry, something went wrong. Please try again later.";
             this.appendMemory(jid, 'assistant', errorResponse);
             return errorResponse;
+        }
+    }
+
+    /**
+     * Determine the type of message
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    getMessageType(message: any): 'text' | 'audio' | 'image' | 'video' | 'document' | 'unknown' {
+        if (message.conversation || message.extendedTextMessage?.text) {
+            return 'text';
+        }
+        if (message.audioMessage) {
+            return 'audio';
+        }
+        if (message.imageMessage) {
+            return 'image';
+        }
+        if (message.videoMessage) {
+            return 'video';
+        }
+        if (message.documentMessage) {
+            return 'document';
+        }
+        return 'unknown';
+    }
+
+    /**
+     * Handle audio/voice message
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async handleAudioMessage(jid: string, msg: any): Promise<string> {
+        try {
+            // Download the audio file
+            const audioPath = await this.downloadMedia(msg, 'audio');
+            if (!audioPath) {
+                return "I couldn't download the voice message. Please try again.";
+            }
+
+            logger.info(`Audio downloaded to: ${audioPath}`);
+
+            // Call the voice skill to transcribe
+            const transcription = await this.callVoiceSkill('transcribe', { audio_path: audioPath });
+            
+            if (!transcription.success) {
+                return `I couldn't transcribe the voice message: ${transcription.message}`;
+            }
+
+            const transcribedText: string = (transcription.data?.text as string) || '';
+            logger.info(`Transcribed text: ${transcribedText}`);
+
+            // Save the transcribed message to memory
+            this.appendMemory(jid, 'user', `[Voice] ${transcribedText}`);
+
+            // Process the transcribed text through the normal message flow
+            const phone = this.jidToPhone(jid);
+            const result = await processWithLLM(phone, transcribedText);
+            
+            if (result.success && result.response) {
+                // Check if response contains a skill action
+                const skillResult = await processSkillAction(result.response, phone);
+                
+                if (skillResult.skillExecuted) {
+                    const finalResponse = await this.processSkillResultWithLLM(phone, transcribedText, skillResult.response, skillResult.skillResult);
+                    this.appendMemory(jid, 'assistant', finalResponse);
+                    return finalResponse;
+                }
+                
+                this.appendMemory(jid, 'assistant', result.response);
+                return result.response;
+            }
+            
+            return "I couldn't process your voice message. Please try again.";
+        } catch (error) {
+            logger.error('Error handling audio message:', error);
+            return "Sorry, I encountered an error processing your voice message.";
+        }
+    }
+
+    /**
+     * Handle image message
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async handleImageMessage(jid: string, msg: any, caption: string): Promise<string> {
+        try {
+            // Download the image file
+            const imagePath = await this.downloadMedia(msg, 'image');
+            if (!imagePath) {
+                return "I couldn't download the image. Please try again.";
+            }
+
+            logger.info(`Image downloaded to: ${imagePath}`);
+
+            // Call the vision skill to analyze the image
+            const analysis = await this.callVisionSkill('describe', { image_path: imagePath });
+            
+            if (!analysis.success) {
+                return `I couldn't analyze the image: ${analysis.message}`;
+            }
+
+            const imageDescription = analysis.data?.description || analysis.message || '';
+            logger.info(`Image analysis: ${imageDescription}`);
+
+            // Build context for the LLM
+            const userMessage = caption
+                ? `[Image with caption: "${caption}"]\nImage content: ${imageDescription}`
+                : `[Image]\nImage content: ${imageDescription}`;
+
+            // Save the image context to memory
+            this.appendMemory(jid, 'user', userMessage);
+
+            // Process through the normal message flow
+            const phone = this.jidToPhone(jid);
+            const result = await processWithLLM(phone, caption || 'What do you see in this image?');
+            
+            if (result.success && result.response) {
+                // Check if response contains a skill action
+                const skillResult = await processSkillAction(result.response, phone);
+                
+                if (skillResult.skillExecuted) {
+                    const finalResponse = await this.processSkillResultWithLLM(phone, caption || 'What do you see?', skillResult.response, skillResult.skillResult);
+                    this.appendMemory(jid, 'assistant', finalResponse);
+                    return finalResponse;
+                }
+                
+                this.appendMemory(jid, 'assistant', result.response);
+                return result.response;
+            }
+            
+            return "I couldn't process your image. Please try again.";
+        } catch (error) {
+            logger.error('Error handling image message:', error);
+            return "Sorry, I encountered an error processing your image.";
+        }
+    }
+
+    /**
+     * Download media from WhatsApp
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async downloadMedia(msg: any, mediaType: 'audio' | 'image' | 'video' | 'document'): Promise<string | null> {
+        try {
+            // Ensure temp directory exists
+            if (!fs.existsSync(TEMP_MEDIA_PATH)) {
+                fs.mkdirSync(TEMP_MEDIA_PATH, { recursive: true });
+            }
+
+            // Generate unique filename
+            const timestamp = Date.now();
+            const randomId = Math.random().toString(36).substring(7);
+            
+            // Get mime type and determine extension
+            let extension = 'bin';
+            let mimeType = '';
+            
+            if (mediaType === 'audio' && msg.message?.audioMessage) {
+                mimeType = msg.message.audioMessage.mimetype || 'audio/ogg';
+                extension = this.getExtensionFromMime(mimeType);
+            } else if (mediaType === 'image' && msg.message?.imageMessage) {
+                mimeType = msg.message.imageMessage.mimetype || 'image/jpeg';
+                extension = this.getExtensionFromMime(mimeType);
+            }
+
+            const filename = `${mediaType}_${timestamp}_${randomId}.${extension}`;
+            const filepath = path.join(TEMP_MEDIA_PATH, filename);
+
+            // Download the media using Baileys downloadMediaMessage function
+            const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger });
+            
+            // Write to file
+            fs.writeFileSync(filepath, buffer);
+            
+            logger.info(`Downloaded ${mediaType} to ${filepath}`);
+            return filepath;
+        } catch (error) {
+            logger.error({ error, mediaType }, 'Error downloading media');
+            return null;
+        }
+    }
+
+    /**
+     * Get file extension from MIME type
+     */
+    getExtensionFromMime(mimeType: string): string {
+        const mimeMap: Record<string, string> = {
+            'audio/ogg': 'ogg',
+            'audio/oga': 'oga',
+            'audio/mp3': 'mp3',
+            'audio/mpeg': 'mp3',
+            'audio/mp4': 'm4a',
+            'audio/m4a': 'm4a',
+            'audio/wav': 'wav',
+            'audio/webm': 'webm',
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/png': 'png',
+            'image/gif': 'gif',
+            'image/webp': 'webp',
+            'video/mp4': 'mp4',
+            'video/webm': 'webm',
+            'application/pdf': 'pdf'
+        };
+        return mimeMap[mimeType] || 'bin';
+    }
+
+    /**
+     * Call the voice skill
+     */
+    async callVoiceSkill(action: 'transcribe' | 'speak' | 'voices' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+        try {
+            const skillParams = { action, ...params };
+            const result = await processSkillAction(JSON.stringify({ skill: 'voice', params: skillParams }), 'system');
+            
+            if (result.skillExecuted && result.skillResult) {
+                return {
+                    success: result.skillResult.success || false,
+                    message: result.skillResult.message || result.response,
+                    data: result.skillResult.data
+                };
+            }
+            
+            return {
+                success: false,
+                message: result.response || 'Voice skill failed to execute'
+            };
+        } catch (error) {
+            logger.error('Error calling voice skill:', error);
+            return {
+                success: false,
+                message: 'Failed to call voice skill'
+            };
+        }
+    }
+
+    /**
+     * Call the vision skill
+     */
+    async callVisionSkill(action: 'analyze' | 'describe' | 'ocr' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+        try {
+            const skillParams = { action, ...params };
+            const result = await processSkillAction(JSON.stringify({ skill: 'vision', params: skillParams }), 'system');
+            
+            if (result.skillExecuted && result.skillResult) {
+                return {
+                    success: result.skillResult.success || false,
+                    message: result.skillResult.message || result.response,
+                    data: result.skillResult.data
+                };
+            }
+            
+            return {
+                success: false,
+                message: result.response || 'Vision skill failed to execute'
+            };
+        } catch (error) {
+            logger.error('Error calling vision skill:', error);
+            return {
+                success: false,
+                message: 'Failed to call vision skill'
+            };
         }
     }
 
