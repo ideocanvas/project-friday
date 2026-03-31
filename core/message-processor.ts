@@ -12,6 +12,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { LLMClient, llmClient, ChatMessage } from './llm-client.js';
+import { isToolCallingEnabled, loadAllSkills, skillsToTools, type ToolCall } from './tool-calling.js';
+import { processToolCalls, skillResultsToToolResults } from './skill-executor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,11 +95,27 @@ function generateSkillsPrompt(): string {
             prompt += `Step 1 - Navigate: {"action": "goto", "skill": "browser", "params": {"action": "goto", "url": "https://example.com"}}\n`;
             prompt += `Step 2 - Extract content: {"action": "scrape_text", "skill": "browser", "params": {"action": "scrape_text"}}\n`;
             prompt += `You MUST wait for goto to complete, then use scrape_text to get the page content.\n`;
-            prompt += `Alternative: Use screenshot to capture the page visually.\n\n`;
+            prompt += `Alternative: Use screenshot to capture the page visually.\n`;
+            prompt += `Note: screenshot returns a file path. Use the vision skill to analyze the screenshot.\n\n`;
         } else if (skillId === 'search') {
             prompt += `\nExample: {"action": "search", "skill": "search", "params": {"action": "search", "query": "your search query"}}\n\n`;
         } else if (skillId === 'static_page') {
             prompt += `\nExample: {"action": "generate", "skill": "static_page", "params": {"action": "generate", "template": "chart", "data": {...}}}\n\n`;
+        } else if (skillId === 'vision') {
+            prompt += `\n**Vision Skill - Image Analysis**\n`;
+            prompt += `Use this skill to analyze images, screenshots, or photos.\n`;
+            prompt += `Actions:\n`;
+            prompt += `- analyze: Answer a specific question about an image\n`;
+            prompt += `- describe: Get a detailed description of an image\n`;
+            prompt += `- ocr: Extract text from images\n`;
+            prompt += `- status: Check if vision model is available\n\n`;
+            prompt += `Examples:\n`;
+            prompt += `{"action": "analyze", "skill": "vision", "params": {"action": "analyze", "image_path": "/path/to/image.png", "query": "What do you see?"}}\n`;
+            prompt += `{"action": "describe", "skill": "vision", "params": {"action": "describe", "image_path": "/path/to/screenshot.png"}}\n`;
+            prompt += `{"action": "ocr", "skill": "vision", "params": {"action": "ocr", "image_path": "/path/to/document.png"}}\n\n`;
+            prompt += `**Workflow with Browser:**\n`;
+            prompt += `1. Use browser screenshot to capture a page\n`;
+            prompt += `2. Use vision skill to analyze the screenshot\n\n`;
         } else {
             prompt += `\nUsage: {"action": "<action>", "skill": "${skillId}", "params": {...}}\n\n`;
         }
@@ -364,15 +382,19 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
             .map((line: string) => {
                 try {
                     const entry = JSON.parse(line) as { role: string; content: string };
-                    return {
-                        role: entry.role as 'user' | 'assistant' | 'system',
-                        content: entry.content
-                    };
+                    // Only allow valid roles from memory (tool messages are not stored)
+                    if (['user', 'assistant', 'system'].includes(entry.role)) {
+                        return {
+                            role: entry.role as 'user' | 'assistant' | 'system',
+                            content: entry.content
+                        };
+                    }
+                    return null;
                 } catch {
                     return null;
                 }
             })
-            .filter((msg): msg is ChatMessage => msg !== null);
+            .filter((msg): msg is { role: 'user' | 'assistant' | 'system'; content: string } => msg !== null);
         
         // Ensure proper alternation - remove consecutive messages with same role
         const alternated: ChatMessage[] = [];
@@ -507,35 +529,134 @@ export async function processMessage(
         // Load recent context
         const history = loadRecentMemory(phone);
         
-        // Call LLM
-        const response = await llmClient.chatWithContext(
-            systemPrompt,
-            history,
-            message,
-            {
-                temperature: options?.temperature ?? 0.7,
-                maxTokens: options?.maxTokens ?? 2048,
-            }
-        );
+        // Check if tool calling mode is enabled
+        const useToolCalling = isToolCallingEnabled();
         
-        if (!response.success) {
+        if (useToolCalling) {
+            // Use native tool calling API
+            console.log('[MessageProcessor] Using native tool calling mode');
+            
+            // Convert skills to tools (loads skills internally)
+            const tools = skillsToTools();
+            
+            // Call LLM with tools
+            const response = await llmClient.chatWithTools(
+                systemPrompt,
+                history,
+                message,
+                tools,
+                {
+                    temperature: options?.temperature ?? 0.7,
+                    maxTokens: options?.maxTokens ?? 2048,
+                }
+            );
+            
+            if (!response.success) {
+                return {
+                    response: "I'm sorry, I encountered an error processing your request. Please try again.",
+                    success: false,
+                    error: response.error,
+                };
+            }
+            
+            // Check if LLM returned tool calls
+            if (response.toolCalls && response.toolCalls.length > 0) {
+                console.log(`[MessageProcessor] LLM requested ${response.toolCalls.length} tool call(s)`);
+                
+                // Execute tool calls
+                const toolResults = await processToolCalls(response.toolCalls, phone);
+                
+                // Convert results to tool result messages
+                const toolResultMessages = skillResultsToToolResults(toolResults);
+                
+                // Feed tool results back to LLM for final response
+                console.log('[MessageProcessor] Feeding tool results back to LLM');
+                
+                // Build conversation with tool results
+                const messagesWithTools: ChatMessage[] = [
+                    ...history,
+                    { role: 'user', content: message },
+                    { role: 'assistant', content: response.content, tool_calls: response.toolCalls },
+                    ...toolResultMessages.map(tr => ({
+                        role: 'tool' as const,
+                        content: tr.content,
+                        tool_call_id: tr.tool_call_id,
+                    })),
+                ];
+                
+                // Get final response from LLM
+                const finalResponse = await llmClient.chatWithContext(
+                    systemPrompt,
+                    messagesWithTools.slice(0, -toolResultMessages.length), // History without tool results
+                    '', // Empty user message since we're continuing
+                    {
+                        temperature: options?.temperature ?? 0.7,
+                        maxTokens: options?.maxTokens ?? 2048,
+                    }
+                );
+                
+                if (!finalResponse.success) {
+                    // Return tool results if final response fails
+                    const resultMessages = toolResults.map(tr => 
+                        tr.result.success ? tr.result.message : `Tool error: ${tr.result.message}`
+                    ).join('\n');
+                    return {
+                        response: resultMessages,
+                        success: true,
+                    };
+                }
+                
+                // Check if this was a first interaction
+                if (isFirstInteraction && isAskingForName(finalResponse.content)) {
+                    updateUserProfile(phone, { first_interaction: false });
+                }
+                
+                return {
+                    response: finalResponse.content,
+                    success: true,
+                };
+            }
+            
+            // No tool calls - return direct response
+            if (isFirstInteraction && isAskingForName(response.content)) {
+                updateUserProfile(phone, { first_interaction: false });
+            }
+            
             return {
-                response: "I'm sorry, I encountered an error processing your request. Please try again.",
-                success: false,
-                error: response.error,
+                response: response.content,
+                success: true,
+            };
+        } else {
+            // Use text-based skill extraction (default)
+            const response = await llmClient.chatWithContext(
+                systemPrompt,
+                history,
+                message,
+                {
+                    temperature: options?.temperature ?? 0.7,
+                    maxTokens: options?.maxTokens ?? 2048,
+                }
+            );
+            
+            if (!response.success) {
+                return {
+                    response: "I'm sorry, I encountered an error processing your request. Please try again.",
+                    success: false,
+                    error: response.error,
+                };
+            }
+            
+            // Check if this was a first interaction and the response is asking for name
+            // Mark first_interaction as false after the first response
+            if (isFirstInteraction && isAskingForName(response.content)) {
+                updateUserProfile(phone, { first_interaction: false });
+            }
+            
+            return {
+                response: response.content,
+                success: true,
             };
         }
-        
-        // Check if this was a first interaction and the response is asking for name
-        // Mark first_interaction as false after the first response
-        if (isFirstInteraction && isAskingForName(response.content)) {
-            updateUserProfile(phone, { first_interaction: false });
-        }
-        
-        return {
-            response: response.content,
-            success: true,
-        };
     } catch (error) {
         console.error('Error processing message:', error);
         return {

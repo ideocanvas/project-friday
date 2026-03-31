@@ -2,10 +2,18 @@
  * Friday LLM Client
  * 
  * Handles communication with the local LLM (LM Studio) using OpenAI-compatible API.
- * Provides a simple interface for chat completions.
+ * Provides a simple interface for chat completions and tool calling.
  */
 
 import 'dotenv/config';
+import { 
+    isToolCallingEnabled, 
+    skillsToTools, 
+    parseToolCalls, 
+    formatToolResult,
+    ToolDefinition,
+    ToolCall 
+} from './tool-calling.js';
 
 // Configuration from environment
 const AI_BASE_URL = process.env.AI_BASE_URL || 'http://localhost:1234/v1';
@@ -14,8 +22,10 @@ const DEFAULT_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS || '60000', 10);
 
 // Type definitions
 export interface ChatMessage {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
+    tool_calls?: ToolCall[];
+    tool_call_id?: string;
 }
 
 export interface ChatCompletionOptions {
@@ -34,6 +44,7 @@ export interface ChatCompletionResponse {
         completionTokens: number;
         totalTokens: number;
     };
+    toolCalls?: ToolCall[];
 }
 
 /**
@@ -80,7 +91,9 @@ export class LLMClient {
                     model: this.model,
                     messages: messages.map(m => ({
                         role: m.role,
-                        content: m.content
+                        content: m.content,
+                        ...(m.tool_calls && { tool_calls: m.tool_calls }),
+                        ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
                     })),
                     temperature,
                     max_tokens: maxTokens,
@@ -104,6 +117,14 @@ export class LLMClient {
                 choices?: Array<{
                     message?: {
                         content?: string;
+                        tool_calls?: Array<{
+                            id?: string;
+                            type?: string;
+                            function?: {
+                                name?: string;
+                                arguments?: string;
+                            };
+                        }>;
                     };
                 }>;
                 usage?: {
@@ -120,9 +141,19 @@ export class LLMClient {
                 totalTokens: data.usage.total_tokens,
             } : undefined;
 
+            // Extract tool calls if present
+            const toolCalls = data.choices?.[0]?.message?.tool_calls;
+            const parsedToolCalls = toolCalls ? parseToolCalls(toolCalls) : undefined;
+
             // Log LLM response
             console.log('[LLM] Response received:');
             console.log(`[LLM] Success: true, Tokens: ${usage?.totalTokens || 'N/A'} (prompt: ${usage?.promptTokens || 'N/A'}, completion: ${usage?.completionTokens || 'N/A'})`);
+            if (parsedToolCalls && parsedToolCalls.length > 0) {
+                console.log(`[LLM] Tool calls: ${parsedToolCalls.length}`);
+                parsedToolCalls.forEach((tc, i) => {
+                    console.log(`[LLM]   [${i}] ${tc.name}`);
+                });
+            }
             const responsePreview = content.length > 500 ? content.substring(0, 500) + '...' : content;
             console.log(`[LLM] Content: ${responsePreview}`);
 
@@ -130,11 +161,182 @@ export class LLMClient {
                 content,
                 success: true,
                 usage,
+                toolCalls: parsedToolCalls,
             };
         } catch (error) {
             clearTimeout(timeoutId);
             
             // Log LLM error
+            console.log('[LLM] Error occurred:');
+            if (error instanceof Error) {
+                console.log(`[LLM] Error: ${error.name} - ${error.message}`);
+                if (error.name === 'AbortError') {
+                    console.log(`[LLM] Request timed out after ${timeoutMs}ms`);
+                    return {
+                        content: '',
+                        success: false,
+                        error: `LLM request timed out after ${timeoutMs}ms`,
+                    };
+                }
+                return {
+                    content: '',
+                    success: false,
+                    error: `LLM request failed: ${error.message}`,
+                };
+            }
+            
+            console.log('[LLM] Unknown error occurred');
+            return {
+                content: '',
+                success: false,
+                error: 'Unknown error occurred',
+            };
+        }
+    }
+
+    /**
+     * Chat with tools support
+     * Uses native tool calling when enabled, falls back to text extraction otherwise
+     */
+    async chatWithTools(
+        systemPrompt: string,
+        history: ChatMessage[],
+        userMessage: string,
+        tools?: ToolDefinition[],
+        options?: Partial<ChatCompletionOptions>
+    ): Promise<ChatCompletionResponse> {
+        const messages: ChatMessage[] = [
+            { role: 'system', content: systemPrompt },
+            ...history,
+            { role: 'user', content: userMessage },
+        ];
+
+        // If tool calling is enabled and tools are provided, use native tool calling
+        if (isToolCallingEnabled() && tools && tools.length > 0) {
+            return this.chatCompletionWithTools({
+                messages,
+                tools,
+                ...options,
+            });
+        }
+
+        // Otherwise, use regular chat completion (text-based tool extraction happens in message-processor)
+        return this.chatCompletion({
+            messages,
+            ...options,
+        });
+    }
+
+    /**
+     * Chat completion with native tool calling
+     */
+    private async chatCompletionWithTools(
+        options: ChatCompletionOptions & { tools: ToolDefinition[] }
+    ): Promise<ChatCompletionResponse> {
+        const { messages, tools, temperature = 0.7, maxTokens = 2048, timeout } = options;
+        
+        const controller = new AbortController();
+        const timeoutMs = timeout || this.defaultTimeout;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        // Log LLM request with tools
+        console.log('[LLM] Sending request with tools:');
+        console.log(`[LLM] Model: ${this.model}`);
+        console.log(`[LLM] Temperature: ${temperature}, MaxTokens: ${maxTokens}`);
+        console.log(`[LLM] Tools: ${tools.length} tool(s)`);
+        console.log('[LLM] Messages:');
+        messages.forEach((m, i) => {
+            const contentPreview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;
+            console.log(`[LLM]   [${i}] ${m.role}: ${contentPreview}`);
+        });
+
+        try {
+            const response = await fetch(`${this.baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: this.model,
+                    messages: messages.map(m => ({
+                        role: m.role,
+                        content: m.content,
+                        ...(m.tool_calls && { tool_calls: m.tool_calls }),
+                        ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
+                    })),
+                    tools: tools,
+                    tool_choice: 'auto',
+                    temperature,
+                    max_tokens: maxTokens,
+                }),
+                signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.log(`[LLM] API error: ${response.status} - ${errorText}`);
+                return {
+                    content: '',
+                    success: false,
+                    error: `LLM API error: ${response.status} - ${errorText}`,
+                };
+            }
+
+            const data = await response.json() as {
+                choices?: Array<{
+                    message?: {
+                        content?: string;
+                        tool_calls?: Array<{
+                            id?: string;
+                            type?: string;
+                            function?: {
+                                name?: string;
+                                arguments?: string;
+                            };
+                        }>;
+                    };
+                }>;
+                usage?: {
+                    prompt_tokens: number;
+                    completion_tokens: number;
+                    total_tokens: number;
+                };
+            };
+
+            const content = data.choices?.[0]?.message?.content?.trim() || '';
+            const usage = data.usage ? {
+                promptTokens: data.usage.prompt_tokens,
+                completionTokens: data.usage.completion_tokens,
+                totalTokens: data.usage.total_tokens,
+            } : undefined;
+
+            // Extract tool calls if present
+            const rawToolCalls = data.choices?.[0]?.message?.tool_calls;
+            const toolCalls = rawToolCalls ? parseToolCalls(rawToolCalls) : undefined;
+
+            // Log LLM response
+            console.log('[LLM] Response received:');
+            console.log(`[LLM] Success: true, Tokens: ${usage?.totalTokens || 'N/A'}`);
+            if (toolCalls && toolCalls.length > 0) {
+                console.log(`[LLM] Tool calls: ${toolCalls.length}`);
+                toolCalls.forEach((tc, i) => {
+                    console.log(`[LLM]   [${i}] ${tc.name}(${JSON.stringify(tc.arguments)})`);
+                });
+            }
+            const responsePreview = content.length > 500 ? content.substring(0, 500) + '...' : content;
+            console.log(`[LLM] Content: ${responsePreview}`);
+
+            return {
+                content,
+                success: true,
+                usage,
+                toolCalls,
+            };
+        } catch (error) {
+            clearTimeout(timeoutId);
+            
             console.log('[LLM] Error occurred:');
             if (error instanceof Error) {
                 console.log(`[LLM] Error: ${error.name} - ${error.message}`);

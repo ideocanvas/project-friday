@@ -3,12 +3,14 @@
  * 
  * Parses LLM responses for skill action blocks and executes skills.
  * Skills are called via JSON action blocks in the LLM response.
+ * Also handles native tool calling when TOOL_CALLING_ENABLED=true.
  */
 
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { ToolCall } from './tool-calling.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -287,3 +289,86 @@ export async function processSkillAction(
         skillResult: result,
     };
 }
+
+/**
+ * Execute a tool call from native tool calling API
+ * Converts ToolCall to skill execution format
+ */
+export async function executeToolCall(
+    toolCall: ToolCall,
+    userId: string
+): Promise<SkillResult> {
+    // ToolCall format: { id, name, arguments }
+    // name is the skill name, arguments contains action and other params
+    const { name, arguments: args } = toolCall;
+    
+    console.log(`[ToolCall] Executing tool: ${name}`);
+    console.log(`[ToolCall] Arguments:`, JSON.stringify(args, null, 2));
+    
+    // Extract action from arguments if present
+    const action = args.action as string | undefined;
+    const params = { ...args };
+    
+    // Execute the skill
+    const result = await executeSkill(name, params, userId);
+    
+    if (result.success) {
+        console.log(`[ToolCall] ${name} executed successfully`);
+    } else {
+        console.error(`[ToolCall] ${name} failed:`, result.message);
+    }
+    
+    return result;
+}
+
+/**
+ * Process multiple tool calls from native tool calling API
+ * Returns results formatted for tool result messages
+ */
+export async function processToolCalls(
+    toolCalls: ToolCall[],
+    userId: string
+): Promise<Array<{ toolCallId: string; result: SkillResult }>> {
+    const results: Array<{ toolCallId: string; result: SkillResult }> = [];
+    
+    for (const toolCall of toolCalls) {
+        const result = await executeToolCall(toolCall, userId);
+        results.push({
+            toolCallId: toolCall.id,
+            result,
+        });
+    }
+    
+    return results;
+}
+
+/**
+ * Convert skill result to tool result format for LLM
+ */
+export function skillResultToToolResult(
+    toolCallId: string,
+    result: SkillResult
+): { tool_call_id: string; content: string } {
+    return {
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+            success: result.success,
+            message: result.message,
+            data: result.data,
+        }),
+    };
+}
+
+/**
+ * Convert multiple skill results to tool results
+ */
+export function skillResultsToToolResults(
+    results: Array<{ toolCallId: string; result: SkillResult }>
+): Array<{ tool_call_id: string; content: string }> {
+    return results.map(({ toolCallId, result }) => 
+        skillResultToToolResult(toolCallId, result)
+    );
+}
+
+// Re-export types and functions from tool-calling for convenience
+export { type ToolCall } from './tool-calling.js';

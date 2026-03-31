@@ -150,6 +150,33 @@
         "template": { "type": "string" },
         "user_id": { "type": "string" }
       }
+    },
+    "vision": {
+      "name": "Vision",
+      "description": "Analyze images using a vision model. Can describe image content, answer questions about images, perform OCR, and analyze multiple images at once. Use this skill when you need to understand visual content from screenshots, photos, or any image files.",
+      "file": "/skills/builtin/vision/index.py",
+      "type": "builtin",
+      "parameters": {
+        "action": {
+          "type": "string",
+          "enum": ["analyze", "describe", "ocr", "status"],
+          "required": true,
+          "description": "Action to perform: 'analyze' answers a question about an image, 'describe' provides a detailed description, 'ocr' extracts text from images, 'status' checks vision model availability"
+        },
+        "image_path": {
+          "type": "string",
+          "description": "Path to a single image file (for analyze, describe, ocr actions)"
+        },
+        "image_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Array of image file paths for analyzing multiple images at once"
+        },
+        "query": {
+          "type": "string",
+          "description": "Question to ask about the image (required for analyze action, optional for describe to focus on specific aspects)"
+        }
+      }
     }
   },
   "version": "1.0.0"
