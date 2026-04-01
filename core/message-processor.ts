@@ -1,15 +1,21 @@
 /**
  * Friday Message Processor
- * 
+ *
  * Handles message processing for the gateway using an LLM Agent Loop.
  * The agent loop allows the LLM to chain multiple tool calls:
  *   LLM → tool call → execute → feed result → LLM → more tools or text response
- * 
+ *
  * This replaces the previous hardcoded flows:
  *   - No more regex-based name/location extraction
  *   - No more single-shot tool calling
  *   - No more text-based skill extraction
  *   - The LLM drives the conversation via tool calls
+ *
+ * ## Async Background Tasks
+ * Messages are first triaged to determine the processing strategy:
+ *   a. rapid_response  → blocking agent loop (fast)
+ *   b. background_task → async background task via task-manager
+ *   c. skill_generation → triggers evolution / skill generation pipeline
  */
 
 import fs from 'fs';
@@ -19,6 +25,8 @@ import 'dotenv/config';
 import { LLMClient, llmClient, ChatMessage } from './llm-client.js';
 import { isToolCallingEnabled, isBuiltInTool, skillsToTools, type ToolCall } from './tool-calling.js';
 import { processToolCalls } from './skill-executor.js';
+import { triageIntent, type TriageResult } from './intent-triage.js';
+import { createTask, startTask, getTaskSummary, getTaskLogs, listTasks, cancelTask, activeTaskCount, type Task } from './task-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +38,7 @@ const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES || '20', 
 const AGENT_MAX_ITERATIONS = parseInt(process.env.AGENT_MAX_ITERATIONS || '5', 10);
 const CONTEXT_BLOCK_GAP_MINUTES = parseInt(process.env.CONTEXT_BLOCK_GAP_MINUTES || '30', 10);
 const CONTEXT_SUMMARY_THRESHOLD_BLOCKS = parseInt(process.env.CONTEXT_SUMMARY_THRESHOLD_BLOCKS || '3', 10);
+const TRIAGE_ENABLED = process.env.TRIAGE_ENABLED !== 'false'; // Enabled by default
 
 // Type definitions
 interface Agent {
@@ -67,6 +76,10 @@ interface ProcessResult {
     response: string;
     success: boolean;
     error?: string;
+    /** If true, the message was dispatched as a background task */
+    backgrounded?: boolean;
+    /** The background task ID (set when backgrounded=true) */
+    taskId?: string;
 }
 
 /**
@@ -229,7 +242,7 @@ export function updateUserProfile(phone: string, updates: Partial<UserProfile>):
 /**
  * Format a timestamp for display in context
  */
-function formatTimestamp(isoString: string): string {
+export function formatTimestamp(isoString: string): string {
     const date = new Date(isoString);
     return date.toLocaleString('en-US', {
         month: 'short',
@@ -346,6 +359,15 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
     for (let i = blocks.length - 1; i >= 0 && allMessages.length < limit; i--) {
         const block = blocks[i];
         if (!block) continue;
+        
+        // Add a time gap separator if this is an older block
+        if (i < blocks.length - 1) {
+            allMessages.unshift({
+                role: 'system',
+                content: `[Conversation paused. Resuming at a later time.]`
+            });
+        }
+        
         // Add messages from this block (in reverse order, then reverse at the end)
         for (let j = block.messages.length - 1; j >= 0 && allMessages.length < limit; j--) {
             const msg = block.messages[j];
@@ -473,6 +495,9 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
     // Add tool usage guidance
     systemPrompt += `\n\n## Tool Usage\n\nYou have access to tools. Use them when needed to help the user. When you learn the user's name, location, or timezone, call save_user_profile to remember it. You can chain multiple tool calls if needed.`;
     
+    // Add strict anti-hallucination guidance
+    systemPrompt += `\n\n## CRITICAL RULES\n\n1. NEVER make up facts, data, or information. If you don't know something, use a tool to find out, or say you don't know.\n2. NEVER invent weather data, news, prices, or any real-time information. Always use search or browser tools to get real data.\n3. If the user asks about current/recent information (weather, news, events), you MUST use a tool (search or browser) to get real data before responding.\n4. Do NOT guess or estimate real-time data. Always verify with tools first.`;
+    
     return systemPrompt;
 }
 
@@ -560,6 +585,73 @@ function handleBuiltInToolCall(
         };
     }
     
+    // ── Task Management Tools ─────────────────────────────────────────────
+    
+    if (name === 'get_task_status') {
+        const taskId = args.task_id && typeof args.task_id === 'string' ? args.task_id : '';
+        if (!taskId) {
+            return {
+                content: JSON.stringify({
+                    success: false,
+                    message: 'No task_id provided.',
+                }),
+            };
+        }
+        
+        const summary = getTaskSummary(taskId);
+        if (!summary) {
+            return {
+                content: JSON.stringify({
+                    success: false,
+                    message: `Task ${taskId} not found.`,
+                }),
+            };
+        }
+        
+        const logs = getTaskLogs(taskId, 5);
+        return {
+            content: JSON.stringify({
+                success: true,
+                task: summary,
+                recent_logs: logs,
+            }),
+        };
+    }
+    
+    if (name === 'peek_system_tasks') {
+        const filterPhone = args.phone && typeof args.phone === 'string' ? args.phone : phone;
+        const taskList = listTasks(filterPhone);
+        return {
+            content: JSON.stringify({
+                success: true,
+                tasks: taskList,
+                active_count: activeTaskCount(),
+            }),
+        };
+    }
+    
+    if (name === 'kill_task') {
+        const taskId = args.task_id && typeof args.task_id === 'string' ? args.task_id : '';
+        if (!taskId) {
+            return {
+                content: JSON.stringify({
+                    success: false,
+                    message: 'No task_id provided.',
+                }),
+            };
+        }
+        
+        const cancelled = cancelTask(taskId);
+        return {
+            content: JSON.stringify({
+                success: cancelled,
+                message: cancelled
+                    ? `Task ${taskId} has been cancelled.`
+                    : `Could not cancel task ${taskId} (not found or already completed).`,
+            }),
+        };
+    }
+    
     return {
         content: JSON.stringify({
             success: false,
@@ -593,11 +685,14 @@ async function agentLoop(
     const temperature = options?.temperature ?? 0.7;
     const maxTokens = options?.maxTokens ?? 2048;
     
+    // Ensure the current user message has the same timestamp formatting as history
+    const userMessageWithTime = `[${formatTimestamp(new Date().toISOString())}] ${userMessage}`;
+    
     // Build initial message array
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
         ...history,
-        { role: 'user', content: userMessage },
+        { role: 'user', content: userMessageWithTime },
     ];
     
     console.log(`[AgentLoop] Starting agent loop (max ${AGENT_MAX_ITERATIONS} iterations)`);
@@ -696,6 +791,10 @@ async function agentLoop(
 /**
  * Process a message using the agent loop.
  * This is the main entry point for message processing.
+ *
+ * If TRIAGE_ENABLED, the message is first triaged to determine whether
+ * it should be processed synchronously (rapid_response) or dispatched
+ * as a background task (background_task / skill_generation).
  */
 export async function processMessage(
     phone: string,
@@ -704,6 +803,10 @@ export async function processMessage(
         agent?: string;
         temperature?: number;
         maxTokens?: number;
+        /** Override triage: force blocking agent loop */
+        forceBlocking?: boolean;
+        /** Pass the actual remote Jid for queue compatibility */
+        jid?: string;
     }
 ): Promise<ProcessResult> {
     try {
@@ -723,7 +826,26 @@ export async function processMessage(
         // Load recent context
         const history = loadRecentMemory(phone);
         
-        // Run the agent loop
+        // ── Intent Triage ──────────────────────────────────────────────────
+        if (TRIAGE_ENABLED && !options?.forceBlocking) {
+            const triageResult = await triageIntent(message, history);
+            console.log(`[MessageProcessor] Triage: category=${triageResult.category}, confidence=${triageResult.confidence}, reason="${triageResult.reason}"`);
+            
+            if (triageResult.category === 'background_task') {
+                return await dispatchBackgroundTask(phone, message, systemPrompt, history, options?.jid);
+            }
+            
+            if (triageResult.category === 'skill_generation') {
+                // For now, still dispatch as a background task with a note
+                // TODO: Integrate with evolution.ts for actual skill generation
+                console.log('[MessageProcessor] Skill generation requested, dispatching as background task with evolution trigger');
+                return await dispatchBackgroundTask(phone, message, systemPrompt, history, options?.jid);
+            }
+            
+            // rapid_response → fall through to blocking agent loop
+        }
+        
+        // ── Blocking Agent Loop ────────────────────────────────────────────
         return await agentLoop(systemPrompt, history, message, phone, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
@@ -736,6 +858,39 @@ export async function processMessage(
             error: error instanceof Error ? error.message : 'Unknown error',
         };
     }
+}
+
+/**
+ * Dispatch a message as a background task.
+ * Creates the task, starts it, and returns an immediate acknowledgment.
+ */
+async function dispatchBackgroundTask(
+    phone: string,
+    message: string,
+    systemPrompt: string,
+    history: ChatMessage[],
+    providedJid?: string,
+): Promise<ProcessResult> {
+    const jid = providedJid || phone; // Will be properly set by gateway if needed
+    const task = createTask({
+        phone,
+        jid,
+        userMessage: message,
+        systemPrompt,
+        history,
+    });
+    
+    // Start execution in the background
+    startTask(task.id);
+    
+    console.log(`[MessageProcessor] Dispatched background task ${task.id} for phone ${phone}`);
+    
+    return {
+        response: `I'm working on that for you now. I'll let you know as soon as I have an answer. (Task ID: ${task.id})`,
+        success: true,
+        backgrounded: true,
+        taskId: task.id,
+    };
 }
 
 /**

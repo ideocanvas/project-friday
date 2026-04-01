@@ -165,7 +165,25 @@ def analyze_image(image_path: str, query: str, timeout_ms: int = VISION_TIMEOUT_
         
         if response.status_code == 200:
             result = response.json()
+            
+            # Try Ollama format ('response') or OpenAI format ('choices')
             analysis = result.get('response', '')
+            if not analysis and 'choices' in result:
+                choices = result.get('choices', [])
+                if choices:
+                    message = choices[0].get('message', {})
+                    analysis = message.get('content', '')
+            
+            # If we STILL got an empty string, log the exact payload to expose the problem
+            if not analysis.strip():
+                return {
+                    "success": False,
+                    "message": f"❌ Vision model returned 200 OK, but output was empty.\nRaw JSON received: {json.dumps(result, indent=2)}",
+                    "data": {
+                        "error": "empty_content",
+                        "raw_response": result
+                    }
+                }
             
             return {
                 "success": True,

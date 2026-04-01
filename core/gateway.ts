@@ -225,7 +225,10 @@ class WhatsAppGateway {
     /**
      * Process incoming message using the agent loop.
      * All message types (text, transcribed audio, image context) end up here.
-     * The agent loop handles tool calling, skill execution, and response generation.
+     *
+     * If the message is triaged as a background task, returns an immediate
+     * acknowledgment. The background task will push its final result to the
+     * pending_messages queue when done.
      */
     async processMessage(jid: string, text: string): Promise<string> {
         const phone = this.jidToPhone(jid);
@@ -234,12 +237,18 @@ class WhatsAppGateway {
         this.appendMemory(jid, 'user', text);
         
         try {
-            // Process message with agent loop
-            const result = await processWithLLM(phone, text);
+            // Process message with agent loop (may triage to background)
+            const result = await processWithLLM(phone, text, { jid });
             
             if (result.success && result.response) {
                 // Save assistant response to memory
                 this.appendMemory(jid, 'assistant', result.response);
+                
+                // If this was dispatched as a background task, log it
+                if (result.backgrounded && result.taskId) {
+                    logger.info({ taskId: result.taskId }, 'Message dispatched as background task');
+                }
+                
                 return result.response;
             } else {
                 logger.error({ error: result.error }, 'Agent loop processing failed');
@@ -337,7 +346,7 @@ class WhatsAppGateway {
             // Feed through the normal message flow
             // Don't save to memory before processMessage — loadRecentMemory() strips trailing user messages
             const phone = this.jidToPhone(jid);
-            const result = await processWithLLM(phone, userMessage);
+            const result = await processWithLLM(phone, userMessage, { jid });
             
             if (result.success && result.response) {
                 // Save the caption/image reference to memory after processing
@@ -516,7 +525,8 @@ class WhatsAppGateway {
     async sendQueuedMessage(msg: QueuedMessage): Promise<void> {
         if (!this.isReady || !this.sock) return;
         
-        const jid = this.phoneToJid(msg.to);
+        // Use the exact JID if it contains '@', otherwise fall back to string manipulation
+        const jid = msg.to.includes('@') ? msg.to : this.phoneToJid(msg.to);
         
         try {
             await this.sock.sendMessage(jid, { text: msg.message });
@@ -524,6 +534,9 @@ class WhatsAppGateway {
             
             // Mark as sent
             this.updateQueueMessageStatus(msg.id, 'sent');
+            
+            // Remember giving this response!
+            this.appendMemory(jid, 'assistant', msg.message);
         } catch (error) {
             logger.error(`Failed to send message to ${msg.to}:`, error);
             

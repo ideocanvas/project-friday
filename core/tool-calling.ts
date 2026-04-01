@@ -296,6 +296,57 @@ const BUILT_IN_TOOLS: OpenAITool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_task_status',
+      description: 'Check the status of a background task. Use this when the user asks about a previously submitted request, e.g. "Is it done yet?", "How is my task going?", "What happened with my search?". Returns the task status, recent logs, and result if completed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: {
+            type: 'string',
+            description: 'The task ID to check (e.g. task_abc123_001)',
+          },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'peek_system_tasks',
+      description: 'List all background tasks for the current user (or all users if no phone specified). Use this when the user asks "What are you working on?", "Show me my tasks", or wants an overview of pending/running tasks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          phone: {
+            type: 'string',
+            description: 'Phone number to filter tasks by (optional, defaults to current user)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'kill_task',
+      description: 'Cancel a running background task. Use this when the user asks to stop, cancel, or abort a previously submitted request, e.g. "Stop searching", "Cancel that", "Never mind about that task".',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: {
+            type: 'string',
+            description: 'The task ID to cancel',
+          },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
 ];
 
 /**
