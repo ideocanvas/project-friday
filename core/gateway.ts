@@ -4,6 +4,10 @@
  * This is the primary interface for users to interact with Friday.
  * Handles receiving and sending messages via WhatsApp using Baileys.
  * Supports text, voice, and image messages.
+ * 
+ * All message types flow through the same agent loop:
+ *   LLM → tool call → execute → feed result → LLM → ... → text response
+ * No more hardcoded skill execution flows.
  */
 
 import {
@@ -19,9 +23,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
-import { processMessage as processWithLLM, processWithCustomPrompt, loadRecentMemory } from './message-processor.js';
-import { processSkillAction } from './skill-executor.js';
-import { loadUserProfile } from './message-processor.js';
+import { processMessage as processWithLLM, loadRecentMemory } from './message-processor.js';
+import { executeSkill } from './skill-executor.js';
 import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -220,7 +223,9 @@ class WhatsAppGateway {
     }
 
     /**
-     * Process incoming message using LLM
+     * Process incoming message using the agent loop.
+     * All message types (text, transcribed audio, image context) end up here.
+     * The agent loop handles tool calling, skill execution, and response generation.
      */
     async processMessage(jid: string, text: string): Promise<string> {
         const phone = this.jidToPhone(jid);
@@ -229,27 +234,15 @@ class WhatsAppGateway {
         this.appendMemory(jid, 'user', text);
         
         try {
-            // Process message with LLM
+            // Process message with agent loop
             const result = await processWithLLM(phone, text);
             
             if (result.success && result.response) {
-                // Check if response contains a skill action
-                const skillResult = await processSkillAction(result.response, phone);
-                
-                if (skillResult.skillExecuted) {
-                    // Skill was executed - send result back to LLM for natural language response
-                    const finalResponse = await this.processSkillResultWithLLM(phone, text, skillResult.response, skillResult.skillResult);
-                    
-                    // Save final response to memory
-                    this.appendMemory(jid, 'assistant', finalResponse);
-                    return finalResponse;
-                }
-                
                 // Save assistant response to memory
                 this.appendMemory(jid, 'assistant', result.response);
                 return result.response;
             } else {
-                logger.error({ error: result.error }, 'LLM processing failed');
+                logger.error({ error: result.error }, 'Agent loop processing failed');
                 const fallbackResponse = "I'm sorry, I couldn't process your request. Please try again.";
                 this.appendMemory(jid, 'assistant', fallbackResponse);
                 return fallbackResponse;
@@ -287,6 +280,8 @@ class WhatsAppGateway {
 
     /**
      * Handle audio/voice message
+     * Downloads audio, transcribes it, then feeds the transcription through
+     * the same processMessage flow as text.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async handleAudioMessage(jid: string, msg: any): Promise<string> {
@@ -299,38 +294,18 @@ class WhatsAppGateway {
 
             logger.info(`Audio downloaded to: ${audioPath}`);
 
-            // Call the voice skill to transcribe
-            const transcription = await this.callVoiceSkill('transcribe', { audio_path: audioPath });
+            // Transcribe using the voice skill directly
+            const transcription = await this.transcribeAudio(audioPath);
             
-            if (!transcription.success) {
-                return `I couldn't transcribe the voice message: ${transcription.message}`;
+            if (!transcription) {
+                return "I couldn't transcribe the voice message. Please try again.";
             }
 
-            const transcribedText: string = (transcription.data?.text as string) || '';
-            logger.info(`Transcribed text: ${transcribedText}`);
+            logger.info(`Transcribed text: ${transcription}`);
 
-            // Save the transcribed message to memory
-            this.appendMemory(jid, 'user', `[Voice] ${transcribedText}`);
-
-            // Process the transcribed text through the normal message flow
-            const phone = this.jidToPhone(jid);
-            const result = await processWithLLM(phone, transcribedText);
-            
-            if (result.success && result.response) {
-                // Check if response contains a skill action
-                const skillResult = await processSkillAction(result.response, phone);
-                
-                if (skillResult.skillExecuted) {
-                    const finalResponse = await this.processSkillResultWithLLM(phone, transcribedText, skillResult.response, skillResult.skillResult);
-                    this.appendMemory(jid, 'assistant', finalResponse);
-                    return finalResponse;
-                }
-                
-                this.appendMemory(jid, 'assistant', result.response);
-                return result.response;
-            }
-            
-            return "I couldn't process your voice message. Please try again.";
+            // Feed transcription through the normal message flow
+            // The agent loop will handle any tool calls the LLM decides to make
+            return await this.processMessage(jid, `[Voice] ${transcription}`);
         } catch (error) {
             logger.error('Error handling audio message:', error);
             return "Sorry, I encountered an error processing your voice message.";
@@ -339,6 +314,8 @@ class WhatsAppGateway {
 
     /**
      * Handle image message
+     * Downloads image, then feeds image context through the same processMessage flow.
+     * The LLM will use the vision skill via tool calling if needed.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async handleImageMessage(jid: string, msg: any, caption: string): Promise<string> {
@@ -351,34 +328,20 @@ class WhatsAppGateway {
 
             logger.info(`Image downloaded to: ${imagePath}`);
 
-            // Build a message telling the LLM about the image.
-            // The LLM will use the vision skill (registered as a tool) to analyze it,
-            // determining the appropriate query based on conversation context and caption.
-            // This avoids hardcoding vision skill logic in the gateway — the LLM decides
-            // how to use the skill based on the skill spec in the system prompt.
+            // Build message with image context
+            // The LLM will decide whether to use the vision skill based on the conversation
             const userMessage = caption
-                ? `[User sent an image with caption: "${caption}"]\nImage saved at: ${imagePath}\nPlease use the vision skill to analyze this image and respond to the user.`
-                : `[User sent an image]\nImage saved at: ${imagePath}\nPlease use the vision skill to analyze this image and respond to the user.`;
+                ? `[User sent an image with caption: "${caption}"]\nImage saved at: ${imagePath}`
+                : `[User sent an image]\nImage saved at: ${imagePath}`;
 
-            // Process through the normal message flow (supports both tool calling and text-based skill extraction)
-            // We do NOT save to memory before calling processWithLLM because loadRecentMemory()
-            // strips trailing user messages from history — the image context would be lost.
+            // Feed through the normal message flow
+            // Don't save to memory before processMessage — loadRecentMemory() strips trailing user messages
             const phone = this.jidToPhone(jid);
             const result = await processWithLLM(phone, userMessage);
             
             if (result.success && result.response) {
-                // Save to memory after processing
+                // Save the caption/image reference to memory after processing
                 this.appendMemory(jid, 'user', caption || '[Image]');
-
-                // Check if response contains a skill action (for text-based skill extraction mode)
-                const skillResult = await processSkillAction(result.response, phone);
-                
-                if (skillResult.skillExecuted) {
-                    const finalResponse = await this.processSkillResultWithLLM(phone, userMessage, skillResult.response, skillResult.skillResult);
-                    this.appendMemory(jid, 'assistant', finalResponse);
-                    return finalResponse;
-                }
-                
                 this.appendMemory(jid, 'assistant', result.response);
                 return result.response;
             }
@@ -387,6 +350,25 @@ class WhatsAppGateway {
         } catch (error) {
             logger.error('Error handling image message:', error);
             return "Sorry, I encountered an error processing your image.";
+        }
+    }
+
+    /**
+     * Transcribe audio using the voice skill directly
+     */
+    async transcribeAudio(audioPath: string): Promise<string | null> {
+        try {
+            const result = await executeSkill('voice', { action: 'transcribe', audio_path: audioPath }, 'system');
+            
+            if (result.success && result.data?.text) {
+                return result.data.text as string;
+            }
+            
+            logger.error(`Transcription failed: ${result.message}`);
+            return null;
+        } catch (error) {
+            logger.error('Error transcribing audio:', error);
+            return null;
         }
     }
 
@@ -457,176 +439,6 @@ class WhatsAppGateway {
             'application/pdf': 'pdf'
         };
         return mimeMap[mimeType] || 'bin';
-    }
-
-    /**
-     * Call the voice skill
-     */
-    async callVoiceSkill(action: 'transcribe' | 'speak' | 'voices' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
-        try {
-            const skillParams = { action, ...params };
-            const result = await processSkillAction(JSON.stringify({ action: action, skill: 'voice', params: skillParams }), 'system');
-            
-            if (result.skillExecuted && result.skillResult) {
-                return {
-                    success: result.skillResult.success || false,
-                    message: result.skillResult.message || result.response,
-                    data: result.skillResult.data
-                };
-            }
-            
-            return {
-                success: false,
-                message: result.response || 'Voice skill failed to execute'
-            };
-        } catch (error) {
-            logger.error('Error calling voice skill:', error);
-            return {
-                success: false,
-                message: 'Failed to call voice skill'
-            };
-        }
-    }
-
-    /**
-     * Call the vision skill
-     */
-    async callVisionSkill(action: 'analyze' | 'describe' | 'ocr' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
-        try {
-            const skillParams = { action, ...params };
-            const result = await processSkillAction(JSON.stringify({ action: action, skill: 'vision', params: skillParams }), 'system');
-            
-            if (result.skillExecuted && result.skillResult) {
-                return {
-                    success: result.skillResult.success || false,
-                    message: result.skillResult.message || result.response,
-                    data: result.skillResult.data
-                };
-            }
-            
-            return {
-                success: false,
-                message: result.response || 'Vision skill failed to execute'
-            };
-        } catch (error) {
-            logger.error('Error calling vision skill:', error);
-            return {
-                success: false,
-                message: 'Failed to call vision skill'
-            };
-        }
-    }
-
-    /**
-     * Process skill result with LLM to generate natural language response
-     */
-    async processSkillResultWithLLM(phone: string, originalQuery: string, skillResultMessage: string, skillResultData?: { success: boolean; data?: Record<string, unknown> }): Promise<string> {
-        try {
-            // Load user profile for context
-            const userProfile = loadUserProfile(phone);
-            const userName = userProfile?.name || 'there';
-            
-            // Load recent conversation history for context
-            const history = loadRecentMemory(phone);
-            
-            // Get current date and time
-            const now = new Date();
-            const currentDate = now.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-            const userTimezone = userProfile?.timezone || 'Asia/Hong_Kong';
-            
-            // Extract actual search data if available
-            let searchResultsContext = skillResultMessage;
-            if (skillResultData?.data?.results && Array.isArray(skillResultData.data.results)) {
-                // Format the search results in a cleaner way for the LLM
-                const results = skillResultData.data.results as Array<{ title?: string; url?: string; snippet?: string }>;
-                const formattedResults = results.slice(0, 5).map((r, i) =>
-                    `${i + 1}. ${r.title || 'Untitled'}\n   ${r.snippet || 'No description'}\n   Source: ${r.url || 'Unknown'}`
-                ).join('\n\n');
-                searchResultsContext = `Found ${results.length} results for "${originalQuery}":\n\n${formattedResults}`;
-            }
-            
-            // Build a prompt for the LLM to process the skill results
-            const systemPrompt = `You are Friday, a helpful AI assistant. You just executed a skill/action to help answer the user's question.
-
-The user's name is ${userName}. Today is ${currentDate}.
-
-## Response Guidelines
-
-Respond in plain, natural language. Be BRIEF - like you're texting a friend. 1-2 sentences max.
-
-- Answer directly based on the skill results
-- If there's an error, briefly say what went wrong
-- Don't list URLs or technical details
-- If the user confirmed something (like "Yes" or "2"), interpret it in context of the conversation
-
-User's question: "${originalQuery}"
-
-Skill results:
-${searchResultsContext}
-
-Your brief response:`;
-
-            // Call LLM with the skill results AND conversation history for context
-            const response = await processWithCustomPrompt(
-                systemPrompt,
-                history, // Include conversation history so LLM understands context
-                `Please answer my question based on the skill results.`,
-                { temperature: 0.7, maxTokens: 150 }
-            );
-            
-            if (response.success && response.response) {
-                // Check if the response looks like JSON (which would indicate an error)
-                const trimmedResponse = response.response.trim();
-                if (trimmedResponse.startsWith('{') && trimmedResponse.includes('"success"')) {
-                    // LLM returned JSON instead of natural language - this shouldn't happen
-                    // but if it does, provide a fallback
-                    logger.warn('LLM returned JSON instead of natural language, providing fallback response');
-                    return this.generateFallbackResponse(originalQuery, skillResultMessage);
-                }
-                logger.info('Successfully processed skill result with LLM');
-                return trimmedResponse;
-            } else {
-                // Fallback to a generated response
-                logger.warn('LLM processing of skill result failed, generating fallback response');
-                return this.generateFallbackResponse(originalQuery, skillResultMessage);
-            }
-        } catch (error) {
-            logger.error('Error processing skill result with LLM:', error);
-            // Fallback to a generated response
-            return this.generateFallbackResponse(originalQuery, skillResultMessage);
-        }
-    }
-
-    /**
-     * Generate a fallback response when LLM processing fails
-     */
-    generateFallbackResponse(originalQuery: string, skillResultMessage: string): string {
-        // Extract key information from the search results
-        const lines = skillResultMessage.split('\n').filter(line => line.trim());
-        
-        // Find the query and result count
-        const queryMatch = skillResultMessage.match(/Found \d+ results for "([^"]+)"/);
-        const query = queryMatch ? queryMatch[1] : originalQuery;
-        
-        // Extract the first few result titles
-        const titles: string[] = [];
-        for (const line of lines) {
-            const titleMatch = line.match(/^\d+\.\s+\*\*(.+?)\*\*/);
-            if (titleMatch && titleMatch[1] && titles.length < 3) {
-                titles.push(titleMatch[1]);
-            }
-        }
-        
-        if (titles.length > 0) {
-            return `I found some information about "${query}". Here are the top results:\n\n${titles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nWould you like me to look up more specific information?`;
-        }
-        
-        return `I searched for "${query}" but couldn't find clear results. Could you try rephrasing your question?`;
     }
 
     /**

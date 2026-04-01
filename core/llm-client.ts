@@ -34,6 +34,7 @@ export interface ChatCompletionOptions {
     temperature?: number;
     maxTokens?: number;
     timeout?: number;
+    tools?: ToolDefinition[];
 }
 
 export interface ChatCompletionResponse {
@@ -66,7 +67,7 @@ export class LLMClient {
      * Create a chat completion
      */
     async chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResponse> {
-        const { messages, temperature = 0.7, maxTokens = 2048, timeout } = options;
+        const { messages, temperature = 0.7, maxTokens = 2048, timeout, tools } = options;
         
         // Filter out messages with empty content that would cause API errors.
         // Keep tool messages (role=tool) and assistant messages with tool_calls even if content is empty.
@@ -84,6 +85,9 @@ export class LLMClient {
         console.log('[LLM] Sending request:');
         console.log(`[LLM] Model: ${this.model}`);
         console.log(`[LLM] Temperature: ${temperature}, MaxTokens: ${maxTokens}`);
+        if (tools && tools.length > 0) {
+            console.log(`[LLM] Tools: ${tools.length} tool(s)`);
+        }
         console.log('[LLM] Messages:');
         validMessages.forEach((m, i) => {
             const contentPreview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content;
@@ -91,22 +95,30 @@ export class LLMClient {
         });
 
         try {
+            const requestBody: Record<string, unknown> = {
+                model: this.model,
+                messages: validMessages.map(m => ({
+                    role: m.role,
+                    content: m.content,
+                    ...(m.tool_calls && { tool_calls: m.tool_calls.map(tc => toolCallToOpenAIFormat(tc)) }),
+                    ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
+                })),
+                temperature,
+                max_tokens: maxTokens,
+            };
+
+            // Add tools if provided
+            if (tools && tools.length > 0) {
+                requestBody.tools = tools;
+                requestBody.tool_choice = 'auto';
+            }
+
             const response = await fetch(`${this.baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: validMessages.map(m => ({
-                        role: m.role,
-                        content: m.content,
-                        ...(m.tool_calls && { tool_calls: m.tool_calls.map(tc => toolCallToOpenAIFormat(tc)) }),
-                        ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
-                    })),
-                    temperature,
-                    max_tokens: maxTokens,
-                }),
+                body: JSON.stringify(requestBody),
                 signal: controller.signal,
             });
 

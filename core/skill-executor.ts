@@ -1,9 +1,8 @@
 /**
  * Friday Skill Executor
  * 
- * Parses LLM responses for skill action blocks and executes skills.
- * Skills are called via JSON action blocks in the LLM response.
- * Also handles native tool calling when TOOL_CALLING_ENABLED=true.
+ * Executes skills via native tool calling API.
+ * Skills are invoked when the LLM makes a tool call — no text-based parsing.
  */
 
 import { spawn } from 'child_process';
@@ -70,13 +69,7 @@ async function resolveCondaPython(): Promise<string | null> {
 }
 
 // Type definitions
-interface SkillAction {
-    action: string;
-    skill: string;
-    params: Record<string, unknown>;
-}
-
-interface SkillResult {
+export interface SkillResult {
     success: boolean;
     message: string;
     data?: Record<string, unknown>;
@@ -167,114 +160,6 @@ export function getSkill(skillName: string): RegistrySkill | null {
 export function listSkills(): string[] {
     const registry = loadRegistry();
     return Object.keys(registry.skills);
-}
-
-/**
- * Parse LLM response for skill action blocks
- * Looks for JSON blocks like: {"action": "search", "skill": "search", "params": {...}}
- * Also handles double-brace format: {{"action": ...}} which some LLMs produce
- */
-export function parseSkillAction(response: string): SkillAction | null {
-    // 1. Try to parse XML style <tool_call> blocks (common in Qwen models)
-    const xmlMatch = response.match(/<tool_call>[\s\S]*?<function=([a-zA-Z0-9_-]+)>([\s\S]*?)<\/function>[\s\S]*?<\/tool_call>/i);
-    if (xmlMatch) {
-        const skill = xmlMatch[1]?.trim() || '';
-        const inner = xmlMatch[2] || '';
-        
-        let actionStr = '';
-        let paramsObj: Record<string, unknown> = {};
-        
-        const actionMatch = inner.match(/<parameter=action>([\s\S]*?)<\/parameter>/i);
-        if (actionMatch && actionMatch[1]) {
-            actionStr = actionMatch[1].trim();
-        }
-        
-        const paramsMatch = inner.match(/<parameter=params>([\s\S]*?)<\/parameter>/i);
-        if (paramsMatch && paramsMatch[1]) {
-            try {
-                paramsObj = JSON.parse(paramsMatch[1].trim());
-                if (!actionStr && paramsObj.action && typeof paramsObj.action === 'string') {
-                    actionStr = paramsObj.action;
-                }
-            } catch (e) {
-                console.log("[Skill] Failed to parse XML tool call params:", e);
-            }
-        }
-        
-        if (skill && actionStr) {
-            return { action: actionStr, skill, params: paramsObj };
-        }
-    }
-
-    // Handle double-brace format {{...}} that some LLMs produce
-    // The inner content might be: {"action": ...} OR just "action": ... (without outer braces)
-    const doubleBraceMatch = response.match(/\{\{([\s\S]*?)\}\}/);
-    if (doubleBraceMatch && doubleBraceMatch[1]) {
-        try {
-            let innerContent = doubleBraceMatch[1].trim();
-            // If the inner content doesn't start with {, wrap it
-            if (!innerContent.startsWith('{')) {
-                innerContent = '{' + innerContent + '}';
-            }
-            const parsed = JSON.parse(innerContent) as SkillAction;
-            if (parsed.action && parsed.skill) {
-                return parsed;
-            }
-        } catch {
-            // Fall through to single brace parsing
-        }
-    }
-    
-    // Find all potential JSON objects in the response
-    // Look for patterns that start with { and contain "action" and "skill" keys
-    const startIndex = response.indexOf('{');
-    if (startIndex === -1) return null;
-    
-    // Track brace depth to find the complete JSON object
-    let depth = 0;
-    let endIndex = -1;
-    
-    for (let i = startIndex; i < response.length; i++) {
-        if (response[i] === '{') {
-            depth++;
-        } else if (response[i] === '}') {
-            depth--;
-            if (depth === 0) {
-                endIndex = i + 1;
-                break;
-            }
-        }
-    }
-    
-    if (endIndex === -1) return null;
-    
-    const jsonStr = response.slice(startIndex, endIndex);
-    
-    try {
-        const parsed = JSON.parse(jsonStr) as SkillAction;
-        
-        // Validate required fields
-        if (parsed.action && parsed.skill) {
-            return parsed;
-        }
-        
-        return null;
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Check if response is ONLY a skill action (no other text)
- */
-export function isOnlySkillAction(response: string): boolean {
-    const trimmed = response.trim();
-    try {
-        const parsed = JSON.parse(trimmed) as SkillAction;
-        return !!(parsed.action && parsed.skill);
-    } catch {
-        return false;
-    }
 }
 
 /**
@@ -414,44 +299,6 @@ export async function executeSkill(
 }
 
 /**
- * Process LLM response and execute skill if needed
- * Returns the final response to send to user
- */
-export async function processSkillAction(
-    response: string,
-    userId: string
-): Promise<{ response: string; skillExecuted: boolean; skillResult?: SkillResult }> {
-    // Check if response contains a skill action
-    const action = parseSkillAction(response);
-    
-    if (!action) {
-        return { response, skillExecuted: false };
-    }
-    
-    console.log(`[Skill] Executing ${action.skill}.${action.params.action || 'default'} for user ${userId}`);
-    console.log(`[Skill] Input params:`, JSON.stringify(action.params, null, 2));
-    
-    // Execute the skill
-    const result = await executeSkill(action.skill, action.params, userId);
-    
-    if (result.success) {
-        console.log(`[Skill] ${action.skill} executed successfully`);
-        console.log(`[Skill] Output:`, result.message.substring(0, 500) + (result.message.length > 500 ? '...' : ''));
-        if (result.data) {
-            console.log(`[Skill] Data keys:`, Object.keys(result.data));
-        }
-    } else {
-        console.error(`[Skill] ${action.skill} failed:`, result.message);
-    }
-    
-    return {
-        response: result.message,
-        skillExecuted: true,
-        skillResult: result,
-    };
-}
-
-/**
  * Execute a tool call from native tool calling API
  * Converts ToolCall to skill execution format
  */
@@ -466,12 +313,8 @@ export async function executeToolCall(
     console.log(`[ToolCall] Executing tool: ${name}`);
     console.log(`[ToolCall] Arguments:`, JSON.stringify(args, null, 2));
     
-    // Extract action from arguments if present
-    const action = args.action as string | undefined;
-    const params = { ...args };
-    
     // Execute the skill
-    const result = await executeSkill(name, params, userId);
+    const result = await executeSkill(name, args, userId);
     
     if (result.success) {
         console.log(`[ToolCall] ${name} executed successfully`);
@@ -530,6 +373,3 @@ export function skillResultsToToolResults(
         skillResultToToolResult(toolCallId, result)
     );
 }
-
-// Re-export types and functions from tool-calling for convenience
-export { type ToolCall } from './tool-calling.js';

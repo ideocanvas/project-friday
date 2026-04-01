@@ -1,10 +1,15 @@
 /**
  * Friday Message Processor
  * 
- * Handles message processing for the gateway:
- * - Loads user profile and memory
- * - Loads agent personality
- * - Calls LLM for response
+ * Handles message processing for the gateway using an LLM Agent Loop.
+ * The agent loop allows the LLM to chain multiple tool calls:
+ *   LLM → tool call → execute → feed result → LLM → more tools or text response
+ * 
+ * This replaces the previous hardcoded flows:
+ *   - No more regex-based name/location extraction
+ *   - No more single-shot tool calling
+ *   - No more text-based skill extraction
+ *   - The LLM drives the conversation via tool calls
  */
 
 import fs from 'fs';
@@ -12,8 +17,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { LLMClient, llmClient, ChatMessage } from './llm-client.js';
-import { isToolCallingEnabled, loadAllSkills, skillsToTools, type ToolCall } from './tool-calling.js';
-import { processToolCalls, skillResultsToToolResults } from './skill-executor.js';
+import { isToolCallingEnabled, isBuiltInTool, skillsToTools, type ToolCall } from './tool-calling.js';
+import { processToolCalls } from './skill-executor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,109 +27,9 @@ const __dirname = path.dirname(__filename);
 const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const DEFAULT_AGENT = process.env.DEFAULT_AGENT || 'friday';
 const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES || '20', 10);
-
-/**
- * Load skills registry by scanning skill directories for skill.json files.
- * Each skill folder (builtin or generated) contains its own self-contained skill.json.
- * No cache — skills can be added/removed at runtime without restart.
- */
-interface SkillParameter {
-    type: string;
-    description?: string;
-    enum?: string[];
-    required?: boolean;
-    default?: unknown;
-}
-
-interface SkillDefinition {
-    name: string;
-    description: string;
-    file: string;
-    type: 'builtin' | 'generated';
-    prompt?: string;
-    parameters: Record<string, SkillParameter>;
-}
-
-interface SkillsRegistry {
-    skills: Record<string, SkillDefinition>;
-    version: string;
-}
-
-function loadSkillsRegistry(): SkillsRegistry {
-    const skills: Record<string, SkillDefinition> = {};
-    const skillsRoot = path.join(process.cwd(), 'skills');
-    
-    // Scan both builtin and generated directories
-    const skillDirs = ['builtin', 'generated'];
-    
-    for (const dir of skillDirs) {
-        const dirPath = path.join(skillsRoot, dir);
-        if (!fs.existsSync(dirPath)) continue;
-        
-        try {
-            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-            for (const entry of entries) {
-                if (!entry.isDirectory()) continue;
-                
-                const skillJsonPath = path.join(dirPath, entry.name, 'skill.json');
-                if (!fs.existsSync(skillJsonPath)) continue;
-                
-                try {
-                    const skillDef = JSON.parse(fs.readFileSync(skillJsonPath, 'utf8')) as SkillDefinition & { id?: string };
-                    const skillId = skillDef.id || entry.name;
-                    skills[skillId] = skillDef;
-                } catch (err) {
-                    console.warn(`Failed to load skill.json from ${skillJsonPath}:`, err);
-                }
-            }
-        } catch (err) {
-            console.warn(`Failed to scan skills directory ${dirPath}:`, err);
-        }
-    }
-    
-    return { skills, version: '2.0.0' };
-}
-
-/**
- * Generate skills documentation for system prompt
- * Reads the `prompt` field from each skill in the registry — skills are self-contained.
- */
-function generateSkillsPrompt(): string {
-    const registry = loadSkillsRegistry();
-    const skills = Object.entries(registry.skills);
-    
-    if (skills.length === 0) {
-        return '';
-    }
-    
-    let prompt = '\n\n## Available Skills\n\n';
-    prompt += 'You have access to skills that let you take actions. When you decide to use a skill, respond with ONLY a JSON action block (no text before or after):\n\n';
-    
-    for (const [skillId, skill] of skills) {
-        prompt += `### ${skill.name} (${skillId})\n`;
-        prompt += `${skill.description}\n`;
-        
-        // Get the action parameter if it exists
-        const actionParam = skill.parameters.action;
-        if (actionParam && actionParam.enum) {
-            prompt += `\nAvailable actions: ${actionParam.enum.join(', ')}\n`;
-        }
-        
-        // Use the self-contained prompt from the skill registry
-        if (skill.prompt) {
-            prompt += `\n${skill.prompt}\n\n`;
-        } else {
-            prompt += `\nUsage: {"action": "<action>", "skill": "${skillId}", "params": {...}}\n\n`;
-        }
-    }
-    
-    prompt += '## How to Use Skills\n\n';
-    prompt += '**CRITICAL: When you want to use a skill, respond with ONLY the JSON block. No text before or after.**\n\n';
-    prompt += 'After the skill executes, you will receive the result and can then respond naturally.\n\n';
-    prompt += 'If you cannot help with something, be honest about your limitations.';
-    
-    return prompt;
-}
+const AGENT_MAX_ITERATIONS = parseInt(process.env.AGENT_MAX_ITERATIONS || '5', 10);
+const CONTEXT_BLOCK_GAP_MINUTES = parseInt(process.env.CONTEXT_BLOCK_GAP_MINUTES || '30', 10);
+const CONTEXT_SUMMARY_THRESHOLD_BLOCKS = parseInt(process.env.CONTEXT_SUMMARY_THRESHOLD_BLOCKS || '3', 10);
 
 // Type definitions
 interface Agent {
@@ -153,7 +58,7 @@ interface UserProfile {
     location?: string;
     timezone?: string;
     preferences?: Record<string, unknown>;
-    first_interaction?: boolean;  // Track if name has been asked
+    first_interaction?: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -162,6 +67,25 @@ interface ProcessResult {
     response: string;
     success: boolean;
     error?: string;
+}
+
+/**
+ * Memory entry stored in memory.log with timestamp
+ */
+interface MemoryEntry {
+    timestamp: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+}
+
+/**
+ * Context block - messages grouped by time gaps
+ */
+interface ContextBlock {
+    startTime: Date;
+    endTime: Date;
+    messages: ChatMessage[];
+    summary?: string;  // Optional summary for old blocks
 }
 
 /**
@@ -229,7 +153,6 @@ export function getDefaultAgent(): Agent {
     const defaultAgent = agents.agents[agents.default_agent] || agents.agents.friday;
     
     if (!defaultAgent) {
-        // Return a fallback agent if none configured
         return {
             name: 'Friday',
             description: 'Default assistant',
@@ -272,7 +195,6 @@ export function createUserProfile(phone: string): UserProfile {
     
     const profile: UserProfile = {
         phone,
-        first_interaction: true,  // Mark as first interaction
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
     };
@@ -287,9 +209,9 @@ export function createUserProfile(phone: string): UserProfile {
  * Update user profile
  */
 export function updateUserProfile(phone: string, updates: Partial<UserProfile>): UserProfile | null {
-    const profile = loadUserProfile(phone);
+    let profile = loadUserProfile(phone);
     if (!profile) {
-        return null;
+        profile = createUserProfile(phone);
     }
     
     const updatedProfile: UserProfile = {
@@ -305,100 +227,23 @@ export function updateUserProfile(phone: string, updates: Partial<UserProfile>):
 }
 
 /**
- * Check if the LLM response is asking for the user's name
- * This helps detect when the first interaction greeting has been made
+ * Format a timestamp for display in context
  */
-export function isAskingForName(response: string): boolean {
-    const patterns = [
-        /what should i call you/i,
-        /what's your name/i,
-        /what is your name/i,
-        /how should i (address|call) you/i,
-        /may i (have|know) your name/i,
-        /your name is\?/i
-    ];
-    
-    return patterns.some(pattern => pattern.test(response));
+function formatTimestamp(isoString: string): string {
+    const date = new Date(isoString);
+    return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
 }
 
 /**
- * Check if the LLM response is asking for the user's location
+ * Load raw memory entries from file
  */
-export function isAskingForLocation(response: string): boolean {
-    const patterns = [
-        /where are you/i,
-        /where are you located/i,
-        /what's your location/i,
-        /what is your location/i,
-        /your location/i,
-        /where do you live/i,
-        /where are you based/i,
-        /what city/i,
-        /which city/i,
-        /what country/i,
-        /which country/i,
-        /where are you based/i,
-    ];
-    
-    return patterns.some(pattern => pattern.test(response));
-}
-
-/**
- * Extract location from user's response
- * Simple heuristic: short, non-question responses are likely locations
- */
-export function extractLocationFromResponse(message: string): string | null {
-    const trimmed = message.trim();
-    
-    // If the message is too long, it's probably not just a location
-    if (trimmed.length > 100) return null;
-    
-    // If it looks like a question, it's not a location
-    if (trimmed.endsWith('?')) return null;
-    
-    // Common non-location responses
-    const nonLocations = ['yes', 'no', 'ok', 'okay', 'sure', 'hi', 'hello', 'hey', 'thanks', 'thank', 'please', 'maybe', 'good', 'bad', 'fine', 'great'];
-    if (nonLocations.includes(trimmed.toLowerCase())) return null;
-    
-    return trimmed;
-}
-
-/**
- * Extract name from user's response
- * Simple heuristic: if user says "I'm X", "My name is X", "Call me X", or just "X"
- */
-export function extractNameFromResponse(message: string): string | null {
-    const patterns = [
-        /^(?:i'm|im|i am)\s+([a-zA-Z]+)/i,
-        /^my name is\s+([a-zA-Z]+)/i,
-        /^call me\s+([a-zA-Z]+)/i,
-        /^it's\s+([a-zA-Z]+)/i,
-        /^its\s+([a-zA-Z]+)/i,
-        /^this is\s+([a-zA-Z]+)/i,
-        // Single word response (likely just the name)
-        /^([a-zA-Z]+)$/i
-    ];
-    
-    for (const pattern of patterns) {
-        const match = message.trim().match(pattern);
-        if (match && match[1]) {
-            const name = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
-            // Filter out common non-name words
-            const nonNames = ['yes', 'no', 'ok', 'okay', 'sure', 'hi', 'hello', 'hey', 'thanks', 'thank'];
-            if (!nonNames.includes(name.toLowerCase())) {
-                return name;
-            }
-        }
-    }
-    
-    return null;
-}
-
-/**
- * Load recent memory/context for a user
- * Ensures proper alternation between user and assistant messages
- */
-export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESSAGES): ChatMessage[] {
+function loadMemoryEntries(phone: string): MemoryEntry[] {
     const memoryPath = path.join(USER_DATA_ROOT, phone, 'memory.log');
     
     if (!fs.existsSync(memoryPath)) {
@@ -407,48 +252,25 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
     
     try {
         const lines = fs.readFileSync(memoryPath, 'utf8').trim().split('\n');
-        const recentLines = lines.slice(-limit * 2); // Get more to account for filtering
+        const entries: MemoryEntry[] = [];
         
-        const messages = recentLines
-            .map((line: string) => {
-                try {
-                    const entry = JSON.parse(line) as { role: string; content: string };
-                    // Only allow valid roles from memory (tool messages are not stored)
-                    if (['user', 'assistant', 'system'].includes(entry.role)) {
-                        return {
-                            role: entry.role as 'user' | 'assistant' | 'system',
-                            content: entry.content
-                        };
-                    }
-                    return null;
-                } catch {
-                    return null;
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+                const entry = JSON.parse(line) as MemoryEntry;
+                if (['user', 'assistant', 'system'].includes(entry.role)) {
+                    entries.push({
+                        timestamp: entry.timestamp || new Date().toISOString(),
+                        role: entry.role as 'user' | 'assistant' | 'system',
+                        content: entry.content
+                    });
                 }
-            })
-            .filter((msg): msg is { role: 'user' | 'assistant' | 'system'; content: string } => msg !== null);
-        
-        // Ensure proper alternation - remove consecutive messages with same role
-        const alternated: ChatMessage[] = [];
-        for (const msg of messages) {
-            if (msg.role === 'system') {
-                alternated.push(msg);
-                continue;
+            } catch {
+                // Skip invalid entries
             }
-            
-            const lastMsg = alternated[alternated.length - 1];
-            if (!lastMsg || lastMsg.role !== msg.role) {
-                alternated.push(msg);
-            }
-            // Skip if same role as previous (duplicate)
         }
         
-        // Ensure the last message before the new user message is from assistant
-        // (or start with user message if empty)
-        while (alternated.length > 0 && alternated[alternated.length - 1]?.role === 'user') {
-            alternated.pop();
-        }
-        
-        return alternated.slice(-limit);
+        return entries;
     } catch (error) {
         console.error(`Error loading memory for ${phone}:`, error);
         return [];
@@ -456,7 +278,159 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
 }
 
 /**
+ * Group memory entries into time-based context blocks.
+ * Messages within CONTEXT_BLOCK_GAP_MINUTES of each other are grouped together.
+ */
+function groupIntoBlocks(entries: MemoryEntry[]): ContextBlock[] {
+    if (entries.length === 0) return [];
+    
+    const gapMs = CONTEXT_BLOCK_GAP_MINUTES * 60 * 1000;
+    const blocks: ContextBlock[] = [];
+    const firstEntry = entries[0];
+    
+    if (!firstEntry) return [];
+    
+    let currentBlock: ContextBlock = {
+        startTime: new Date(firstEntry.timestamp),
+        endTime: new Date(firstEntry.timestamp),
+        messages: []
+    };
+    
+    for (const entry of entries) {
+        const entryTime = new Date(entry.timestamp);
+        const timeDiff = entryTime.getTime() - currentBlock.endTime.getTime();
+        
+        if (timeDiff > gapMs && currentBlock.messages.length > 0) {
+            // Start a new block
+            blocks.push(currentBlock);
+            currentBlock = {
+                startTime: entryTime,
+                endTime: entryTime,
+                messages: []
+            };
+        }
+        
+        // Add message to current block with timestamp prefix
+        const timestampPrefix = `[${formatTimestamp(entry.timestamp)}] `;
+        currentBlock.messages.push({
+            role: entry.role,
+            content: timestampPrefix + entry.content
+        });
+        currentBlock.endTime = entryTime;
+    }
+    
+    // Don't forget the last block
+    if (currentBlock.messages.length > 0) {
+        blocks.push(currentBlock);
+    }
+    
+    return blocks;
+}
+
+/**
+ * Load recent memory/context for a user with time-based context blocks.
+ * Messages are prefixed with timestamps and grouped by time gaps.
+ */
+export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESSAGES): ChatMessage[] {
+    const entries = loadMemoryEntries(phone);
+    
+    if (entries.length === 0) return [];
+    
+    // Group into time-based blocks
+    const blocks = groupIntoBlocks(entries);
+    
+    // Flatten blocks into messages, taking from the most recent blocks
+    const allMessages: ChatMessage[] = [];
+    
+    // Process blocks from most recent to oldest
+    for (let i = blocks.length - 1; i >= 0 && allMessages.length < limit; i--) {
+        const block = blocks[i];
+        if (!block) continue;
+        // Add messages from this block (in reverse order, then reverse at the end)
+        for (let j = block.messages.length - 1; j >= 0 && allMessages.length < limit; j--) {
+            const msg = block.messages[j];
+            if (msg) {
+                allMessages.unshift(msg);
+            }
+        }
+    }
+    
+    // Ensure proper alternation - remove consecutive messages with same role
+    const alternated: ChatMessage[] = [];
+    for (const msg of allMessages) {
+        if (msg.role === 'system') {
+            alternated.push(msg);
+            continue;
+        }
+        
+        const lastMsg = alternated[alternated.length - 1];
+        if (!lastMsg || lastMsg.role !== msg.role) {
+            alternated.push(msg);
+        }
+    }
+    
+    // Ensure the last message before the new user message is from assistant
+    while (alternated.length > 0 && alternated[alternated.length - 1]?.role === 'user') {
+        alternated.pop();
+    }
+    
+    return alternated.slice(-limit);
+}
+
+/**
+ * Search through memory for relevant context.
+ * Returns messages that match the query keywords.
+ */
+export function searchMemory(phone: string, query: string, maxResults: number = 5): ChatMessage[] {
+    const entries = loadMemoryEntries(phone);
+    
+    if (entries.length === 0) return [];
+    
+    // Extract keywords from query (simple approach: split on whitespace, remove common words)
+    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 
+        'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+        'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used', 'to', 'of',
+        'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
+        'before', 'after', 'above', 'below', 'between', 'under', 'again', 'further', 'then',
+        'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each', 'few', 'more',
+        'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
+        'than', 'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until', 'while',
+        'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'it', 'its']);
+    
+    const keywords = query.toLowerCase()
+        .split(/\s+/)
+        .filter(word => word.length > 2 && !stopWords.has(word));
+    
+    if (keywords.length === 0) return [];
+    
+    // Score each entry by keyword matches
+    const scored = entries.map(entry => {
+        const contentLower = entry.content.toLowerCase();
+        let score = 0;
+        for (const keyword of keywords) {
+            if (contentLower.includes(keyword)) {
+                score += 1;
+            }
+        }
+        return { entry, score };
+    });
+    
+    // Sort by score and take top results
+    const results = scored
+        .filter(s => s.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxResults)
+        .map(s => ({
+            role: s.entry.role,
+            content: `[${formatTimestamp(s.entry.timestamp)}] ${s.entry.content}`
+        }));
+    
+    return results;
+}
+
+/**
  * Build system prompt with user context
+ * No longer injects skills documentation — tools are passed separately via the tool calling API.
  */
 export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null): string {
     let systemPrompt = agent.system_prompt;
@@ -464,14 +438,7 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
     // Load soul content if available
     const soulContent = loadSoulContent(agent.soul_file);
     if (soulContent) {
-        // Insert soul content after the main system prompt
         systemPrompt = soulContent;
-    }
-    
-    // Dynamically generate skills documentation from registry
-    const skillsPrompt = generateSkillsPrompt();
-    if (skillsPrompt) {
-        systemPrompt += skillsPrompt;
     }
     
     // Add current date and time context
@@ -490,14 +457,6 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
     const userTimezone = userProfile?.timezone || 'Asia/Hong_Kong';
     systemPrompt += `\n\n## Current Date and Time\n\nToday's date is ${currentDate}.\nThe current time is ${currentTime} (${userTimezone}).\n\nWhen answering questions about "today", "now", or current events, use this date as reference.`;
     
-    // Check if this is a first interaction (user has no name)
-    const isFirstInteraction = userProfile && !userProfile.name && userProfile.first_interaction !== false;
-    
-    // Add first interaction instruction if needed
-    if (isFirstInteraction) {
-        systemPrompt += `\n\n## IMPORTANT: First Interaction\n\nThis is your first conversation with this user. You do not know their name yet.\n\nYou MUST:\n1. Greet them warmly: "Hi! I'm ${agent.name}, your personal assistant."\n2. Immediately ask for their name: "What should I call you?"\n3. Wait for their response before proceeding with other tasks\n\nDo NOT ask for other information (location, preferences) yet. Only ask for their name.`;
-    }
-    
     // Add user context if available
     if (userProfile?.name) {
         systemPrompt += `\n\nThe user's name is ${userProfile.name}.`;
@@ -511,11 +470,232 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
     // Add personality hints
     systemPrompt += `\n\nRespond in a ${agent.personality.tone} tone with a ${agent.personality.style} style.`;
     
+    // Add tool usage guidance
+    systemPrompt += `\n\n## Tool Usage\n\nYou have access to tools. Use them when needed to help the user. When you learn the user's name, location, or timezone, call save_user_profile to remember it. You can chain multiple tool calls if needed.`;
+    
     return systemPrompt;
 }
 
 /**
- * Process a message and return AI response
+ * Handle built-in tool calls (not skill-based tools).
+ * Returns a result message for the LLM.
+ */
+function handleBuiltInToolCall(
+    toolCall: ToolCall,
+    phone: string
+): { content: string } {
+    const { name, arguments: args } = toolCall;
+    
+    if (name === 'save_user_profile') {
+        const updates: Partial<UserProfile> = {};
+        
+        if (args.name && typeof args.name === 'string') {
+            updates.name = args.name;
+        }
+        if (args.location && typeof args.location === 'string') {
+            updates.location = args.location;
+        }
+        if (args.timezone && typeof args.timezone === 'string') {
+            updates.timezone = args.timezone;
+        }
+        
+        if (Object.keys(updates).length > 0) {
+            const updated = updateUserProfile(phone, updates);
+            const saved = Object.keys(updates)
+                .map(k => `${k}: ${(updates as Record<string, unknown>)[k]}`)
+                .join(', ');
+            console.log(`[AgentLoop] Saved user profile: ${saved}`);
+            return {
+                content: JSON.stringify({
+                    success: true,
+                    message: `User profile updated: ${saved}`,
+                }),
+            };
+        }
+        
+        return {
+            content: JSON.stringify({
+                success: false,
+                message: 'No valid profile fields provided.',
+            }),
+        };
+    }
+    
+    if (name === 'search_memory') {
+        const query = args.query && typeof args.query === 'string' ? args.query : '';
+        const maxResults = typeof args.max_results === 'number' ? args.max_results : 
+                          (typeof args.max_results === 'string' ? parseInt(args.max_results, 10) : 5);
+        
+        if (!query) {
+            return {
+                content: JSON.stringify({
+                    success: false,
+                    message: 'No query provided for memory search.',
+                }),
+            };
+        }
+        
+        console.log(`[AgentLoop] Searching memory for: "${query}"`);
+        const results = searchMemory(phone, query, maxResults);
+        
+        if (results.length === 0) {
+            return {
+                content: JSON.stringify({
+                    success: true,
+                    message: 'No relevant memories found.',
+                    results: [],
+                }),
+            };
+        }
+        
+        return {
+            content: JSON.stringify({
+                success: true,
+                message: `Found ${results.length} relevant memory entries.`,
+                results: results.map(r => ({
+                    role: r.role,
+                    content: r.content,
+                })),
+            }),
+        };
+    }
+    
+    return {
+        content: JSON.stringify({
+            success: false,
+            message: `Unknown built-in tool: ${name}`,
+        }),
+    };
+}
+
+/**
+ * Agent Loop — the core LLM interaction cycle.
+ * 
+ * Replaces the previous rigid flow with a proper agent loop:
+ *   1. Send messages + tools to LLM
+ *   2. If LLM returns tool calls → execute → append results → loop
+ *   3. If LLM returns text → done
+ * 
+ * The LLM decides how many tool calls to make and in what order.
+ * It can chain: search → browse → extract → summarize, etc.
+ */
+async function agentLoop(
+    systemPrompt: string,
+    history: ChatMessage[],
+    userMessage: string,
+    phone: string,
+    options?: {
+        temperature?: number;
+        maxTokens?: number;
+    }
+): Promise<ProcessResult> {
+    const tools = skillsToTools();
+    const temperature = options?.temperature ?? 0.7;
+    const maxTokens = options?.maxTokens ?? 2048;
+    
+    // Build initial message array
+    const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        ...history,
+        { role: 'user', content: userMessage },
+    ];
+    
+    console.log(`[AgentLoop] Starting agent loop (max ${AGENT_MAX_ITERATIONS} iterations)`);
+    console.log(`[AgentLoop] Tools available: ${tools.map(t => 'function' in t ? t.function.name : 'unknown').join(', ')}`);
+    
+    for (let iteration = 0; iteration < AGENT_MAX_ITERATIONS; iteration++) {
+        console.log(`[AgentLoop] Iteration ${iteration + 1}/${AGENT_MAX_ITERATIONS}`);
+        
+        // Call LLM with current messages and tools
+        const response = await llmClient.chatCompletion({
+            messages,
+            temperature,
+            maxTokens,
+            tools,
+        });
+        
+        if (!response.success) {
+            console.error(`[AgentLoop] LLM call failed: ${response.error}`);
+            return {
+                response: "I'm sorry, I encountered an error processing your request. Please try again.",
+                success: false,
+                error: response.error,
+            };
+        }
+        
+        // Check if LLM returned tool calls
+        if (response.toolCalls && response.toolCalls.length > 0) {
+            console.log(`[AgentLoop] LLM requested ${response.toolCalls.length} tool call(s): ${response.toolCalls.map(tc => tc.name).join(', ')}`);
+            
+            // Append assistant message with tool_calls to conversation
+            messages.push({
+                role: 'assistant',
+                content: response.content || '',
+                tool_calls: response.toolCalls,
+            });
+            
+            // Execute each tool call
+            for (const toolCall of response.toolCalls) {
+                let toolResult: { content: string };
+                
+                if (isBuiltInTool(toolCall.name)) {
+                    // Handle built-in tools (save_user_profile, etc.)
+                    toolResult = handleBuiltInToolCall(toolCall, phone);
+                } else {
+                    // Handle skill-based tools
+                    const results = await processToolCalls([toolCall], phone);
+                    const result = results[0];
+                    if (result) {
+                        toolResult = {
+                            content: JSON.stringify({
+                                success: result.result.success,
+                                message: result.result.message,
+                                data: result.result.data,
+                            }),
+                        };
+                    } else {
+                        toolResult = {
+                            content: JSON.stringify({
+                                success: false,
+                                message: `Tool execution failed: ${toolCall.name}`,
+                            }),
+                        };
+                    }
+                }
+                
+                // Append tool result to conversation
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: toolResult.content,
+                });
+            }
+            
+            // Continue the loop — let the LLM decide what to do next
+            continue;
+        }
+        
+        // No tool calls — LLM returned a text response, we're done
+        console.log(`[AgentLoop] LLM returned text response (iteration ${iteration + 1})`);
+        const content = response.content || "I'm sorry, I couldn't generate a response. Please try again.";
+        
+        return {
+            response: content,
+            success: true,
+        };
+    }
+    
+    // Max iterations reached
+    console.warn(`[AgentLoop] Max iterations (${AGENT_MAX_ITERATIONS}) reached`);
+    return {
+        response: "I've been thinking about this for a while. Could you try rephrasing your question?",
+        success: true,
+    };
+}
+
+/**
+ * Process a message using the agent loop.
+ * This is the main entry point for message processing.
  */
 export async function processMessage(
     phone: string,
@@ -529,7 +709,6 @@ export async function processMessage(
     try {
         // Load or create user profile
         let userProfile = loadUserProfile(phone);
-        const isNewUser = !userProfile;
         if (!userProfile) {
             userProfile = createUserProfile(phone);
         }
@@ -538,167 +717,17 @@ export async function processMessage(
         const agentName = options?.agent || userProfile.agent || DEFAULT_AGENT;
         const agent = getAgent(agentName) || getDefaultAgent();
         
-        // Check if this is a first interaction (user has no name yet)
-        const isFirstInteraction = !userProfile.name && userProfile.first_interaction !== false;
-        
-        // If user has no name and this is not their first message,
-        // try to extract name from their response
-        if (!userProfile.name && !isFirstInteraction) {
-            const extractedName = extractNameFromResponse(message);
-            if (extractedName) {
-                userProfile = updateUserProfile(phone, { 
-                    name: extractedName,
-                    first_interaction: false 
-                }) || userProfile;
-                console.log(`Extracted name "${extractedName}" for user ${phone}`);
-            }
-        }
-        
-        // Build system prompt
+        // Build system prompt (no skills injection — tools are passed separately)
         const systemPrompt = buildSystemPrompt(agent, userProfile);
         
         // Load recent context
         const history = loadRecentMemory(phone);
         
-        // Check if the last assistant message was asking for location
-        // and the user doesn't already have a location saved
-        if (!userProfile.location && history.length > 0) {
-            const lastMsg = history[history.length - 1];
-            if (lastMsg && lastMsg.role === 'assistant' && isAskingForLocation(lastMsg.content)) {
-                const extractedLocation = extractLocationFromResponse(message);
-                if (extractedLocation) {
-                    userProfile = updateUserProfile(phone, { location: extractedLocation }) || userProfile;
-                    console.log(`Extracted location "${extractedLocation}" for user ${phone}`);
-                }
-            }
-        }
-        
-        // Check if tool calling mode is enabled
-        const useToolCalling = isToolCallingEnabled();
-        
-        if (useToolCalling) {
-            // Use native tool calling API
-            console.log('[MessageProcessor] Using native tool calling mode');
-            
-            // Convert skills to tools (loads skills internally)
-            const tools = skillsToTools();
-            
-            // Call LLM with tools
-            const response = await llmClient.chatWithTools(
-                systemPrompt,
-                history,
-                message,
-                tools,
-                {
-                    temperature: options?.temperature ?? 0.7,
-                    maxTokens: options?.maxTokens ?? 2048,
-                }
-            );
-            
-            if (!response.success) {
-                return {
-                    response: "I'm sorry, I encountered an error processing your request. Please try again.",
-                    success: false,
-                    error: response.error,
-                };
-            }
-            
-            // Check if LLM returned tool calls
-            if (response.toolCalls && response.toolCalls.length > 0) {
-                console.log(`[MessageProcessor] LLM requested ${response.toolCalls.length} tool call(s)`);
-                
-                // Execute tool calls
-                const toolResults = await processToolCalls(response.toolCalls, phone);
-                
-                // Convert results to tool result messages
-                const toolResultMessages = skillResultsToToolResults(toolResults);
-                
-                // Feed tool results back to LLM for final response
-                console.log('[MessageProcessor] Feeding tool results back to LLM');
-                
-                // Build complete conversation with tool results
-                const messagesWithToolResults: ChatMessage[] = [
-                    { role: 'system', content: systemPrompt },
-                    ...history,
-                    { role: 'user', content: message },
-                    { role: 'assistant', content: response.content, tool_calls: response.toolCalls },
-                    ...toolResultMessages.map(tr => ({
-                        role: 'tool' as const,
-                        content: tr.content,
-                        tool_call_id: tr.tool_call_id,
-                    })),
-                ];
-                
-                // Get final response from LLM using chatCompletion directly
-                // (not chatWithContext which adds an empty user message causing API 400 errors)
-                const finalResponse = await llmClient.chatCompletion({
-                    messages: messagesWithToolResults,
-                    temperature: options?.temperature ?? 0.7,
-                    maxTokens: options?.maxTokens ?? 2048,
-                });
-                
-                if (!finalResponse.success) {
-                    // Return tool results if final response fails
-                    const resultMessages = toolResults.map(tr => 
-                        tr.result.success ? tr.result.message : `Tool error: ${tr.result.message}`
-                    ).join('\n');
-                    return {
-                        response: resultMessages,
-                        success: true,
-                    };
-                }
-                
-                // Check if this was a first interaction
-                if (isFirstInteraction && isAskingForName(finalResponse.content)) {
-                    updateUserProfile(phone, { first_interaction: false });
-                }
-                
-                return {
-                    response: finalResponse.content,
-                    success: true,
-                };
-            }
-            
-            // No tool calls - return direct response
-            if (isFirstInteraction && isAskingForName(response.content)) {
-                updateUserProfile(phone, { first_interaction: false });
-            }
-            
-            return {
-                response: response.content,
-                success: true,
-            };
-        } else {
-            // Use text-based skill extraction (default)
-            const response = await llmClient.chatWithContext(
-                systemPrompt,
-                history,
-                message,
-                {
-                    temperature: options?.temperature ?? 0.7,
-                    maxTokens: options?.maxTokens ?? 2048,
-                }
-            );
-            
-            if (!response.success) {
-                return {
-                    response: "I'm sorry, I encountered an error processing your request. Please try again.",
-                    success: false,
-                    error: response.error,
-                };
-            }
-            
-            // Check if this was a first interaction and the response is asking for name
-            // Mark first_interaction as false after the first response
-            if (isFirstInteraction && isAskingForName(response.content)) {
-                updateUserProfile(phone, { first_interaction: false });
-            }
-            
-            return {
-                response: response.content,
-                success: true,
-            };
-        }
+        // Run the agent loop
+        return await agentLoop(systemPrompt, history, message, phone, {
+            temperature: options?.temperature,
+            maxTokens: options?.maxTokens,
+        });
     } catch (error) {
         console.error('Error processing message:', error);
         return {

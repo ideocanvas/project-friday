@@ -246,13 +246,100 @@ export function loadAllSkills(): Record<string, SkillDef> {
 }
 
 /**
- * Converts all skills to tool definitions based on provider
+ * Built-in system tools (not from skill registry).
+ * These are handled directly by the agent loop, not by skill-executor.
+ */
+const BUILT_IN_TOOLS: OpenAITool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'save_user_profile',
+      description: 'Save user profile information learned during conversation. Use this when the user shares their name, location, timezone, or preferences. Call this proactively when you learn new information about the user.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'User\'s display name',
+          },
+          location: {
+            type: 'string',
+            description: 'User\'s location (city, country)',
+          },
+          timezone: {
+            type: 'string',
+            description: 'User\'s IANA timezone (e.g. Asia/Hong_Kong)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_memory',
+      description: 'Search through past conversation history for relevant context. Use this when you need to recall something the user mentioned earlier, or to find relevant past discussions before performing an action. This helps avoid asking the user to repeat information.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Keywords or topic to search for in past conversations',
+          },
+          max_results: {
+            type: 'integer',
+            description: 'Maximum number of results to return (default: 5)',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
+];
+
+/**
+ * Get built-in system tools
+ */
+export function getBuiltInTools(): ToolDefinition[] {
+  const provider = getAIProvider();
+  if (provider === 'ollama') {
+    // Convert OpenAITool format to OllamaTool format
+    return BUILT_IN_TOOLS.map(tool => {
+      const ollamaTool: OllamaTool = {
+        type: 'function',
+        function: {
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters: tool.function.parameters as Record<string, unknown>,
+        },
+      };
+      return ollamaTool;
+    });
+  }
+  return [...BUILT_IN_TOOLS];
+}
+
+/**
+ * Check if a tool name is a built-in system tool
+ */
+export function isBuiltInTool(name: string): boolean {
+  return BUILT_IN_TOOLS.some(t => t.function.name === name);
+}
+
+/**
+ * Converts all skills to tool definitions based on provider,
+ * including built-in system tools.
  */
 export function skillsToTools(): ToolDefinition[] {
   const skills = loadAllSkills();
   const provider = getAIProvider();
   const tools: ToolDefinition[] = [];
   
+  // Add built-in system tools first
+  tools.push(...getBuiltInTools());
+  
+  // Add skill-based tools
   for (const [skillName, skill] of Object.entries(skills)) {
     if (provider === 'ollama') {
       tools.push(skillToOllamaTool(skillName, skill));
