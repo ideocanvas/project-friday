@@ -31,6 +31,8 @@ export interface TriageResult {
     identifiedTools?: string[];
     /** If skill_generation, a description of what skill to generate */
     skillDescription?: string;
+    /** A standalone query or command summarizing the user's intent based on chat context */
+    query: string;
 }
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -83,37 +85,41 @@ export async function triageIntent(
     const msgLower = userMessage.toLowerCase().trim();
 
     // ── Stage 1: Fast heuristic ────────────────────────────────────────────
-
-    // Check for rapid response signals
-    if (msgLower.length < 20) {
-        for (const kw of RAPID_KEYWORDS) {
-            if (msgLower.includes(kw)) {
-                return {
-                    category: 'rapid_response',
-                    reason: `Short message with casual keyword "${kw}"`,
-                    confidence: 0.9,
-                };
+    // If we have history, we prefer the LLM to summarize context
+    if (history.length === 0) {
+        // Check for rapid response signals
+        if (msgLower.length < 20) {
+            for (const kw of RAPID_KEYWORDS) {
+                if (msgLower.includes(kw)) {
+                    return {
+                        category: 'rapid_response',
+                        reason: `Short message with casual keyword "${kw}"`,
+                        confidence: 0.9,
+                        query: userMessage,
+                    };
+                }
             }
         }
-    }
 
-    // Check for explicit task signals
-    let backgroundScore = 0;
-    for (const kw of BACKGROUND_KEYWORDS) {
-        if (msgLower.includes(kw)) {
-            backgroundScore += 1;
+        // Check for explicit task signals
+        let backgroundScore = 0;
+        for (const kw of BACKGROUND_KEYWORDS) {
+            if (msgLower.includes(kw)) {
+                backgroundScore += 1;
+            }
         }
-    }
 
-    // If strong background signal, classify without LLM
-    if (backgroundScore >= 2) {
-        const identifiedTools = matchToolsToMessage(msgLower);
-        return {
-            category: 'background_task',
-            reason: `Message contains ${backgroundScore} task-related keywords`,
-            confidence: 0.85,
-            identifiedTools,
-        };
+        // If strong background signal, classify without LLM
+        if (backgroundScore >= 2) {
+            const identifiedTools = matchToolsToMessage(msgLower);
+            return {
+                category: 'background_task',
+                reason: `Message contains ${backgroundScore} task-related keywords`,
+                confidence: 0.85,
+                identifiedTools,
+                query: userMessage,
+            };
+        }
     }
 
     // ── Stage 2: LLM-based triage ──────────────────────────────────────────
@@ -129,6 +135,7 @@ export async function triageIntent(
             category: 'rapid_response',
             reason: 'Triage LLM call failed, defaulting to blocking loop',
             confidence: 0.3,
+            query: userMessage,
         };
     }
 }
@@ -181,6 +188,9 @@ Given the user's message, classify their intent into exactly one of these catego
 2. "background_task" - The user wants to perform an action that requires a tool/skill (search, browse, generate content, analyze images, voice synthesis, etc.). This includes any request that would benefit from running asynchronously.
 3. "skill_generation" - The user is asking for something that none of the available skills can handle, and a new skill would need to be created.
 
+You must also summarize the user's ultimate intent into a clear, standalone "query" or "command" based on the chat context. 
+For example, if the history says "We are going to Paris" and the user says "Find cheap hotels there", the query should be "Find cheap hotels in Paris".
+
 Available skills: ${availableSkills.join(', ')}
 
 Respond with ONLY a JSON object (no markdown, no code fences):
@@ -188,6 +198,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
   "category": "rapid_response" | "background_task" | "skill_generation",
   "reason": "brief explanation",
   "confidence": 0.0-1.0,
+  "query": "The standalone summarized query or command",
   "identifiedTools": ["tool_name"] (optional, only for background_task),
   "skillDescription": "what skill to generate" (optional, only for skill_generation)
 }`;
@@ -197,7 +208,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
 
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...(recentContext ? [{ role: 'user' as const, content: `Recent conversation:\n${recentContext}\n\nNew message: ${userMessage}` }] : [{ role: 'user' as const, content: userMessage }]),
+        ...(recentContext ? [{ role: 'user' as const, content: `Recent conversation:\n${recentContext}\n\nNew message: ${userMessage || '(empty message)'}` }] : [{ role: 'user' as const, content: userMessage || '(empty message)' }]),
     ];
 
     const response = await llmClient.chatCompletion({
@@ -227,12 +238,14 @@ Respond with ONLY a JSON object (no markdown, no code fences):
             category: 'rapid_response',
             reason: 'Failed to parse triage response',
             confidence: 0.3,
+            query: userMessage,
         };
     }
 
     const category = validateCategory(parsed.category as string);
     const reason = typeof parsed.reason === 'string' ? parsed.reason : 'No reason provided';
     const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
+    const query = typeof parsed.query === 'string' ? parsed.query : userMessage;
     const identifiedTools = Array.isArray(parsed.identifiedTools) ? parsed.identifiedTools as string[] : undefined;
     const skillDescription = typeof parsed.skillDescription === 'string' ? parsed.skillDescription : undefined;
 
@@ -240,6 +253,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
         category,
         reason,
         confidence,
+        query,
         identifiedTools,
         skillDescription,
     };

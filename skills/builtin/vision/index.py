@@ -18,12 +18,42 @@ from typing import Optional, Dict, Any, List
 
 # === CONFIGURATION ===
 SKILL_NAME = "vision"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Environment variables
 VISION_MODEL = os.environ.get("VISION_MODEL", "llava:13b")
 VISION_BASE_URL = os.environ.get("VISION_BASE_URL", "http://localhost:11434")
 VISION_TIMEOUT_MS = int(os.environ.get("VISION_TIMEOUT_MS", "60000"))
+# API type: "ollama" or "openai" (OpenAI-compatible, e.g. LM Studio)
+VISION_API_TYPE = os.environ.get("VISION_API_TYPE", "ollama").lower().strip()
+_IS_OPENAI = VISION_API_TYPE == "openai"
+
+
+def _get_api_url(endpoint: str) -> str:
+    """Build the full API URL based on VISION_API_TYPE.
+    
+    Args:
+        endpoint: One of "generate", "models", "tags"
+    
+    Returns:
+        Full URL for the requested endpoint
+    """
+    if _IS_OPENAI:
+        base = VISION_BASE_URL.rstrip("/")
+        # Strip trailing /v1 if present so we don't double-up
+        if base.endswith("/v1"):
+            base = base[:-3]
+        if endpoint == "generate":
+            return f"{base}/v1/chat/completions"
+        elif endpoint == "models":
+            return f"{base}/v1/models"
+    else:
+        # Ollama
+        if endpoint == "generate":
+            return f"{VISION_BASE_URL}/api/generate"
+        elif endpoint == "tags":
+            return f"{VISION_BASE_URL}/api/tags"
+    return f"{VISION_BASE_URL}/{endpoint}"
 
 # === SKILL PARAMETERS ===
 PARAMETERS = {
@@ -82,15 +112,20 @@ def encode_image_to_base64(file_path: str) -> Optional[str]:
 def check_vision_available() -> Dict[str, Any]:
     """Check if the vision model is available."""
     try:
-        # Try to get model info from Ollama
-        response = requests.get(
-            f"{VISION_BASE_URL}/api/tags",
-            timeout=10
-        )
+        if _IS_OPENAI:
+            response = requests.get(_get_api_url("models"), timeout=10)
+        else:
+            response = requests.get(_get_api_url("tags"), timeout=10)
         
         if response.status_code == 200:
-            models = response.json().get('models', [])
-            model_names = [m.get('name', '') for m in models]
+            data = response.json()
+
+            if _IS_OPENAI:
+                # OpenAI /v1/models returns {"data": [{"id": "model-name", ...}]}
+                model_names = [m.get('id', '') for m in data.get('data', [])]
+            else:
+                # Ollama /api/tags returns {"models": [{"name": "model-name", ...}]}
+                model_names = [m.get('name', '') for m in data.get('models', [])]
             
             # Check if vision model is in the list
             vision_available = any(VISION_MODEL in name for name in model_names)
@@ -99,6 +134,7 @@ def check_vision_available() -> Dict[str, Any]:
                 "available": vision_available,
                 "model": VISION_MODEL,
                 "base_url": VISION_BASE_URL,
+                "api_type": VISION_API_TYPE,
                 "installed_models": model_names
             }
         else:
@@ -148,17 +184,40 @@ def analyze_image(image_path: str, query: str, timeout_ms: int = VISION_TIMEOUT_
     
     mime_type = get_image_mime_type(image_path)
     
-    # Call Ollama API for vision
+    # Call vision API
     try:
-        payload = {
-            "model": VISION_MODEL,
-            "prompt": query,
-            "images": [base64_image],
-            "stream": False
-        }
+        if _IS_OPENAI:
+            # OpenAI-compatible (LM Studio) — use /v1/chat/completions with vision content
+            payload = {
+                "model": VISION_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": query},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 2048,
+                "temperature": 0.3
+            }
+        else:
+            # Ollama — use /api/generate
+            payload = {
+                "model": VISION_MODEL,
+                "prompt": query,
+                "images": [base64_image],
+                "stream": False
+            }
         
         response = requests.post(
-            f"{VISION_BASE_URL}/api/generate",
+            _get_api_url("generate"),
             json=payload,
             timeout=timeout_ms / 1000  # Convert to seconds
         )
@@ -166,13 +225,17 @@ def analyze_image(image_path: str, query: str, timeout_ms: int = VISION_TIMEOUT_
         if response.status_code == 200:
             result = response.json()
             
-            # Try Ollama format ('response') or OpenAI format ('choices')
-            analysis = result.get('response', '')
-            if not analysis and 'choices' in result:
+            # Parse response based on API type
+            if _IS_OPENAI:
+                # OpenAI format: {"choices": [{"message": {"content": "..."}}]}
                 choices = result.get('choices', [])
+                analysis = ''
                 if choices:
                     message = choices[0].get('message', {})
                     analysis = message.get('content', '')
+            else:
+                # Ollama format: {"response": "..."}
+                analysis = result.get('response', '')
             
             # If we STILL got an empty string, log the exact payload to expose the problem
             if not analysis.strip():
@@ -261,24 +324,59 @@ def analyze_multiple_images(image_paths: List[str], query: str, timeout_ms: int 
             "data": {"error": "no_valid_images"}
         }
     
-    # Call Ollama API for vision
+    # Call vision API
     try:
-        payload = {
-            "model": VISION_MODEL,
-            "prompt": query,
-            "images": encoded_images,
-            "stream": False
-        }
+        if _IS_OPENAI:
+            # OpenAI-compatible (LM Studio) — use /v1/chat/completions with multi-image content
+            image_contents = [
+                {"type": "text", "text": query}
+            ]
+            for img_path, img_b64 in zip(image_paths, encoded_images):
+                mime_type = get_image_mime_type(img_path)
+                image_contents.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{img_b64}"
+                    }
+                })
+            payload = {
+                "model": VISION_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": image_contents
+                    }
+                ],
+                "max_tokens": 2048,
+                "temperature": 0.3
+            }
+        else:
+            # Ollama — use /api/generate
+            payload = {
+                "model": VISION_MODEL,
+                "prompt": query,
+                "images": encoded_images,
+                "stream": False
+            }
         
         response = requests.post(
-            f"{VISION_BASE_URL}/api/generate",
+            _get_api_url("generate"),
             json=payload,
             timeout=timeout_ms / 1000
         )
         
         if response.status_code == 200:
             result = response.json()
-            analysis = result.get('response', '')
+            
+            # Parse response based on API type
+            if _IS_OPENAI:
+                choices = result.get('choices', [])
+                analysis = ''
+                if choices:
+                    message = choices[0].get('message', {})
+                    analysis = message.get('content', '')
+            else:
+                analysis = result.get('response', '')
             
             return {
                 "success": True,

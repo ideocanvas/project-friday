@@ -13,6 +13,28 @@ import * as path from 'path';
 const VISION_MODEL = process.env.VISION_MODEL || '';
 const VISION_BASE_URL = process.env.VISION_BASE_URL || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const VISION_ENABLED = VISION_MODEL.length > 0;
+// API type: "ollama" or "openai" (OpenAI-compatible, e.g. LM Studio)
+const VISION_API_TYPE = (process.env.VISION_API_TYPE || 'ollama').toLowerCase().trim();
+const IS_OPENAI = VISION_API_TYPE === 'openai';
+
+/**
+ * Build the full API URL based on VISION_API_TYPE.
+ * @param endpoint One of "generate", "models", "tags"
+ */
+function getApiUrl(endpoint: string): string {
+    if (IS_OPENAI) {
+        let base = VISION_BASE_URL.replace(/\/+$/, '');
+        // Strip trailing /v1 if present so we don't double-up
+        if (base.endsWith('/v1')) base = base.slice(0, -3);
+        if (endpoint === 'generate') return `${base}/v1/chat/completions`;
+        if (endpoint === 'models') return `${base}/v1/models`;
+    } else {
+        // Ollama
+        if (endpoint === 'generate') return `${VISION_BASE_URL}/api/generate`;
+        if (endpoint === 'tags') return `${VISION_BASE_URL}/api/tags`;
+    }
+    return `${VISION_BASE_URL}/${endpoint}`;
+}
 
 /**
  * Check if vision capabilities are available
@@ -111,21 +133,48 @@ export async function analyzeImage(
         console.log(`[Vision] Model: ${VISION_MODEL}`);
         console.log(`[Vision] Query: ${query}`);
         
-        // Call Ollama API for vision
+        // Call vision API
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         
-        const response = await fetch(`${VISION_BASE_URL}/api/generate`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
+        let payload: object;
+        if (IS_OPENAI) {
+            // OpenAI-compatible (LM Studio) — chat completions with vision content
+            payload = {
+                model: VISION_MODEL,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: query },
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: `data:${mimeType};base64,${base64Image}`
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens: 2048,
+                temperature: 0.3
+            };
+        } else {
+            // Ollama — /api/generate
+            payload = {
                 model: VISION_MODEL,
                 prompt: query,
                 images: [base64Image],
                 stream: false
-            }),
+            };
+        }
+        
+        const response = await fetch(getApiUrl('generate'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
             signal: controller.signal
         });
         
@@ -139,20 +188,32 @@ export async function analyzeImage(
             };
         }
         
-        const data = await response.json() as { response?: string; error?: string };
+        const data = await response.json() as Record<string, unknown>;
         
+        // Check for error in response body
         if (data.error) {
             return {
                 success: false,
-                error: data.error
+                error: String(data.error)
             };
+        }
+        
+        // Extract description based on API type
+        let description = '';
+        if (IS_OPENAI) {
+            const choices = (data.choices as Array<{ message?: { content?: string } }>) ?? [];
+            if (choices.length > 0 && choices[0]!.message) {
+                description = choices[0]!.message!.content || '';
+            }
+        } else {
+            description = (data as { response?: string }).response || '';
         }
         
         console.log(`[Vision] Analysis complete`);
         
         return {
             success: true,
-            description: data.response || 'No description generated'
+            description: description || 'No description generated'
         };
         
     } catch (error) {
@@ -223,21 +284,47 @@ export async function analyzeMultipleImages(
         console.log(`[Vision] Model: ${VISION_MODEL}`);
         console.log(`[Vision] Query: ${query}`);
         
-        // Call Ollama API for vision
+        // Call vision API
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         
-        const response = await fetch(`${VISION_BASE_URL}/api/generate`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
+        let payload: object;
+        if (IS_OPENAI) {
+            // OpenAI-compatible — multi-image content
+            const imageContents: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
+                { type: 'text', text: query }
+            ];
+            for (let i = 0; i < imagePaths.length; i++) {
+                const mime = getImageMimeType(imagePaths[i]!);
+                imageContents.push({
+                    type: 'image_url',
+                    image_url: { url: `data:${mime};base64,${images[i]}` }
+                });
+            }
+            payload = {
+                model: VISION_MODEL,
+                messages: [
+                    { role: 'user', content: imageContents }
+                ],
+                max_tokens: 2048,
+                temperature: 0.3
+            };
+        } else {
+            // Ollama
+            payload = {
                 model: VISION_MODEL,
                 prompt: query,
                 images: images,
                 stream: false
-            }),
+            };
+        }
+        
+        const response = await fetch(getApiUrl('generate'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
             signal: controller.signal
         });
         
@@ -251,20 +338,31 @@ export async function analyzeMultipleImages(
             };
         }
         
-        const data = await response.json() as { response?: string; error?: string };
+        const data = await response.json() as Record<string, unknown>;
         
         if (data.error) {
             return {
                 success: false,
-                error: data.error
+                error: String(data.error)
             };
+        }
+        
+        // Extract description based on API type
+        let description = '';
+        if (IS_OPENAI) {
+            const choices = (data.choices as Array<{ message?: { content?: string } }>) ?? [];
+            if (choices.length > 0 && choices[0]!.message) {
+                description = choices[0]!.message!.content || '';
+            }
+        } else {
+            description = (data as { response?: string }).response || '';
         }
         
         console.log(`[Vision] Multi-image analysis complete`);
         
         return {
             success: true,
-            description: data.response || 'No description generated'
+            description: description || 'No description generated'
         };
         
     } catch (error) {
@@ -297,8 +395,8 @@ export async function checkVisionModelAvailable(): Promise<boolean> {
     }
     
     try {
-        // Try to get model info from Ollama
-        const response = await fetch(`${VISION_BASE_URL}/api/tags`, {
+        const endpoint = IS_OPENAI ? 'models' : 'tags';
+        const response = await fetch(getApiUrl(endpoint), {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -310,13 +408,22 @@ export async function checkVisionModelAvailable(): Promise<boolean> {
             return false;
         }
         
-        const data = await response.json() as { models?: Array<{ name: string }> };
+        const data = await response.json() as Record<string, unknown>;
         
-        if (data.models && Array.isArray(data.models)) {
-            const modelExists = data.models.some(m => 
+        if (IS_OPENAI) {
+            // OpenAI /v1/models returns { data: [{ id: "model-name" }] }
+            const models = (data.data as Array<{ id: string }>) ?? [];
+            const modelExists = models.some(m => m.id === VISION_MODEL || m.id.startsWith(VISION_MODEL + ':'));
+            if (!modelExists) {
+                console.log(`[Vision] Model ${VISION_MODEL} not found in available models`);
+                return false;
+            }
+        } else {
+            // Ollama /api/tags returns { models: [{ name: "model-name" }] }
+            const models = (data.models as Array<{ name: string }>) ?? [];
+            const modelExists = models.some(m =>
                 m.name === VISION_MODEL || m.name.startsWith(VISION_MODEL + ':')
             );
-            
             if (!modelExists) {
                 console.log(`[Vision] Model ${VISION_MODEL} not found in available models`);
                 return false;

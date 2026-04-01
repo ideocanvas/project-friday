@@ -38,6 +38,7 @@ const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES || '20', 
 const AGENT_MAX_ITERATIONS = parseInt(process.env.AGENT_MAX_ITERATIONS || '5', 10);
 const CONTEXT_BLOCK_GAP_MINUTES = parseInt(process.env.CONTEXT_BLOCK_GAP_MINUTES || '30', 10);
 const CONTEXT_SUMMARY_THRESHOLD_BLOCKS = parseInt(process.env.CONTEXT_SUMMARY_THRESHOLD_BLOCKS || '3', 10);
+const MAX_CONTEXT_AGE_HOURS = parseInt(process.env.MAX_CONTEXT_AGE_HOURS || '4', 10);
 const TRIAGE_ENABLED = process.env.TRIAGE_ENABLED !== 'false'; // Enabled by default
 
 // Type definitions
@@ -356,10 +357,18 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
     const allMessages: ChatMessage[] = [];
     
     // Process blocks from most recent to oldest
+    const maxAgeMs = MAX_CONTEXT_AGE_HOURS * 60 * 60 * 1000;
+    const nowMs = Date.now();
+
     for (let i = blocks.length - 1; i >= 0 && allMessages.length < limit; i--) {
         const block = blocks[i];
         if (!block) continue;
         
+        // Skip blocks that ended too long ago
+        if ((nowMs - block.endTime.getTime()) > maxAgeMs) {
+            continue;
+        }
+
         // Add a time gap separator if this is an older block
         if (i < blocks.length - 1) {
             allMessages.unshift({
@@ -827,26 +836,33 @@ export async function processMessage(
         const history = loadRecentMemory(phone);
         
         // ── Intent Triage ──────────────────────────────────────────────────
+        let finalMessage = message;
+        let finalHistory = history;
+
         if (TRIAGE_ENABLED && !options?.forceBlocking) {
             const triageResult = await triageIntent(message, history);
-            console.log(`[MessageProcessor] Triage: category=${triageResult.category}, confidence=${triageResult.confidence}, reason="${triageResult.reason}"`);
+            console.log(`[MessageProcessor] Triage: category=${triageResult.category}, query="${triageResult.query}", confidence=${triageResult.confidence}, reason="${triageResult.reason}"`);
+            
+            // The Agent responding to this intent will only see the summarized query, stripped of chat history
+            finalMessage = triageResult.query;
+            finalHistory = [];
             
             if (triageResult.category === 'background_task') {
-                return await dispatchBackgroundTask(phone, message, systemPrompt, history, options?.jid);
+                return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
             }
             
             if (triageResult.category === 'skill_generation') {
                 // For now, still dispatch as a background task with a note
                 // TODO: Integrate with evolution.ts for actual skill generation
                 console.log('[MessageProcessor] Skill generation requested, dispatching as background task with evolution trigger');
-                return await dispatchBackgroundTask(phone, message, systemPrompt, history, options?.jid);
+                return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
             }
             
-            // rapid_response → fall through to blocking agent loop
+            // rapid_response → fall through to blocking agent loop using the summarized query
         }
         
         // ── Blocking Agent Loop ────────────────────────────────────────────
-        return await agentLoop(systemPrompt, history, message, phone, {
+        return await agentLoop(systemPrompt, finalHistory, finalMessage, phone, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
         });
