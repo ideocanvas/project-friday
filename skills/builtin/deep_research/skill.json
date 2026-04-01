@@ -1,0 +1,35 @@
+{
+  "id": "deep_research",
+  "name": "Deep Research",
+  "description": "Deep dive research combining search, browser, and LLM reasoning to find and verify information from multiple sources",
+  "file": "index.py",
+  "type": "builtin",
+  "prompt": "**Deep Research Skill - Multi-source Research with LLM Reasoning**\n\nUse this skill when the user asks questions that require:\n- Current/real-time information (news, weather, stock prices, events)\n- Multi-source verification or cross-referencing\n- Detailed analysis or comparison of topics\n- Summarization of web content from multiple pages\n- Analysis of a specific URL with optional link-following\n\nThis skill autonomously searches, browses, extracts, and synthesizes information using a configurable LLM for reasoning.\n\nActions:\n- **research**: Full research pipeline (search → browse → extract → synthesize)\n  Example: {\"action\": \"research\", \"skill\": \"deep_research\", \"params\": {\"action\": \"research\", \"query\": \"latest AI news this week\", \"mode\": \"deep\"}}\n  Example: {\"action\": \"research\", \"skill\": \"deep_research\", \"params\": {\"action\": \"research\", \"query\": \"weather in Hong Kong\", \"mode\": \"quick\"}}\n\n- **analyze_url**: Analyze a specific URL (browse → extract → optionally follow links → synthesize)\n  Example: {\"action\": \"analyze_url\", \"skill\": \"deep_research\", \"params\": {\"action\": \"analyze_url\", \"url\": \"https://example.com/article\", \"query\": \"summarize key points\"}}\n\n- **status**: Check if deep research is configured and ready\n  Example: {\"action\": \"status\", \"skill\": \"deep_research\", \"params\": {\"action\": \"status\"}}\n\nModes:\n- **quick**: 1-2 sources, fast response. Use for simple factual questions (weather, price, definition).\n- **deep**: 3-5 sources, thorough analysis. Use for complex research (news summary, comparison, detailed analysis).",
+  "parameters": {
+    "action": {
+      "type": "string",
+      "enum": ["research", "analyze_url", "status"],
+      "required": true,
+      "description": "Action to perform: 'research' for full search+browse+synthesize, 'analyze_url' for specific URL analysis, 'status' to check configuration"
+    },
+    "query": {
+      "type": "string",
+      "description": "Research query or question (required for 'research' action, optional for 'analyze_url' to focus analysis)"
+    },
+    "url": {
+      "type": "string",
+      "description": "URL to analyze (required for 'analyze_url' action)"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["quick", "deep"],
+      "default": "deep",
+      "description": "Research depth: 'quick' = 1-2 sources (fast), 'deep' = 3-5 sources (thorough)"
+    },
+    "max_sources": {
+      "type": "number",
+      "default": 5,
+      "description": "Maximum number of sources to visit (overrides mode default if set)"
+    }
+  }
+}
