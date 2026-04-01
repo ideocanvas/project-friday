@@ -27,7 +27,9 @@
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:pages": "tsx scripts/generate-test-pages.ts",
     "test:cleanup": "tsx scripts/cleanup-test-pages.ts",
-    "clear-messages": "tsx scripts/clear-messages.ts"
+    "clear-messages": "tsx scripts/clear-messages.ts",
+    "install-skills": "tsx scripts/install-skill-deps.ts",
+    "install-skills:dry": "tsx scripts/install-skill-deps.ts --dry-run"
   },
   "keywords": [
     "ai",

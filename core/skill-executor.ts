@@ -18,6 +18,57 @@ const __dirname = path.dirname(__filename);
 // Configuration
 const SKILLS_PATH = process.env.SKILLS_PATH || './skills';
 
+// Cached conda Python path (resolved once on first use)
+let cachedCondaPython: string | null = null;
+
+/**
+ * Resolve the Python executable path for the configured conda environment.
+ * Uses direct path instead of `conda run` because `conda run` doesn't forward stdin.
+ */
+async function resolveCondaPython(): Promise<string | null> {
+    if (cachedCondaPython !== null) {
+        return cachedCondaPython;
+    }
+    
+    const condaEnv = process.env.CONDA_ENV_NAME;
+    if (!condaEnv) {
+        return null;
+    }
+    
+    // Try CONDA_PYTHON_PATH env var first (allows explicit override)
+    if (process.env.CONDA_PYTHON_PATH) {
+        cachedCondaPython = process.env.CONDA_PYTHON_PATH;
+        console.log(`[Skill] Using CONDA_PYTHON_PATH: ${cachedCondaPython}`);
+        return cachedCondaPython;
+    }
+    
+    // Resolve via `conda run -n <env> which python`
+    return new Promise((resolve) => {
+        const child = spawn('conda', ['run', '-n', condaEnv, 'which', 'python'], {
+            cwd: process.cwd(),
+            env: process.env,
+        });
+        let stdout = '';
+        child.stdout.on('data', (data) => { stdout += data.toString(); });
+        child.stderr.on('data', () => {});
+        child.on('close', (code) => {
+            if (code === 0 && stdout.trim()) {
+                cachedCondaPython = stdout.trim();
+                console.log(`[Skill] Resolved conda Python: ${cachedCondaPython}`);
+            } else {
+                console.error(`[Skill] Failed to resolve conda Python path, falling back to conda run`);
+                cachedCondaPython = null;
+            }
+            resolve(cachedCondaPython);
+        });
+        child.on('error', () => {
+            console.error(`[Skill] Failed to resolve conda Python path, falling back to conda run`);
+            cachedCondaPython = null;
+            resolve(null);
+        });
+    });
+}
+
 // Type definitions
 interface SkillAction {
     action: string;
@@ -124,6 +175,37 @@ export function listSkills(): string[] {
  * Also handles double-brace format: {{"action": ...}} which some LLMs produce
  */
 export function parseSkillAction(response: string): SkillAction | null {
+    // 1. Try to parse XML style <tool_call> blocks (common in Qwen models)
+    const xmlMatch = response.match(/<tool_call>[\s\S]*?<function=([a-zA-Z0-9_-]+)>([\s\S]*?)<\/function>[\s\S]*?<\/tool_call>/i);
+    if (xmlMatch) {
+        const skill = xmlMatch[1]?.trim() || '';
+        const inner = xmlMatch[2] || '';
+        
+        let actionStr = '';
+        let paramsObj: Record<string, unknown> = {};
+        
+        const actionMatch = inner.match(/<parameter=action>([\s\S]*?)<\/parameter>/i);
+        if (actionMatch && actionMatch[1]) {
+            actionStr = actionMatch[1].trim();
+        }
+        
+        const paramsMatch = inner.match(/<parameter=params>([\s\S]*?)<\/parameter>/i);
+        if (paramsMatch && paramsMatch[1]) {
+            try {
+                paramsObj = JSON.parse(paramsMatch[1].trim());
+                if (!actionStr && paramsObj.action && typeof paramsObj.action === 'string') {
+                    actionStr = paramsObj.action;
+                }
+            } catch (e) {
+                console.log("[Skill] Failed to parse XML tool call params:", e);
+            }
+        }
+        
+        if (skill && actionStr) {
+            return { action: actionStr, skill, params: paramsObj };
+        }
+    }
+
     // Handle double-brace format {{...}} that some LLMs produce
     // The inner content might be: {"action": ...} OR just "action": ... (without outer braces)
     const doubleBraceMatch = response.match(/\{\{([\s\S]*?)\}\}/);
@@ -235,14 +317,38 @@ export async function executeSkill(
         };
     }
     
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
         const input = JSON.stringify({
             params,
             user_id: userId,
         });
         
-        const command = isPython ? 'python3' : 'node';
-        const child = spawn(command, [skillFile], {
+        let command = '';
+        let args: string[] = [];
+        
+        if (isPython) {
+            const condaPython = await resolveCondaPython();
+            if (condaPython) {
+                // Use the conda Python binary directly (conda run doesn't forward stdin)
+                command = condaPython;
+                args = [skillFile];
+            } else if (process.env.CONDA_ENV_NAME) {
+                // Fallback to conda run if resolution failed
+                command = 'conda';
+                args = ['run', '-n', process.env.CONDA_ENV_NAME, 'python', skillFile];
+            } else {
+                command = 'python3';
+                args = [skillFile];
+            }
+        } else {
+            command = 'node';
+            args = [skillFile];
+        }
+        
+        const fullCommand = `${command} ${args.join(' ')}`;
+        console.log(`[Skill] Executing: ${fullCommand}`);
+        
+        const child = spawn(command, args, {
             cwd: process.cwd(),
             env: process.env,
         });
@@ -260,9 +366,23 @@ export async function executeSkill(
         
         child.on('close', (code) => {
             if (code !== 0) {
+                // Try to extract the real error from stdout (Python skills output errors as JSON to stdout)
+                let errorDetail = stderr || 'Unknown error';
+                if (stdout.trim()) {
+                    try {
+                        const stdoutResult = JSON.parse(stdout.trim()) as Record<string, unknown>;
+                        if (stdoutResult.error || stdoutResult.message) {
+                            errorDetail = String(stdoutResult.error || stdoutResult.message || errorDetail);
+                        }
+                    } catch {
+                        // stdout is not JSON, include it as additional context
+                        errorDetail = `${stderr}\nstdout: ${stdout.trim()}`;
+                    }
+                }
+                console.error(`[Skill] Failed (exit code ${code}): ${errorDetail}`);
                 resolve({
                     success: false,
-                    message: `Skill exited with code ${code}: ${stderr || 'Unknown error'}`,
+                    message: `Skill exited with code ${code}: ${errorDetail}`,
                 });
                 return;
             }

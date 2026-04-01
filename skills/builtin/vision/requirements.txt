@@ -1,0 +1,4 @@
+# Vision Skill Dependencies
+# Used for image analysis via LM Studio/Ollama API
+
+requests>=2.28.0

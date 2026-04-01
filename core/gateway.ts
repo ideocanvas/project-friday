@@ -351,34 +351,30 @@ class WhatsAppGateway {
 
             logger.info(`Image downloaded to: ${imagePath}`);
 
-            // Call the vision skill to analyze the image
-            const analysis = await this.callVisionSkill('describe', { image_path: imagePath });
-            
-            if (!analysis.success) {
-                return `I couldn't analyze the image: ${analysis.message}`;
-            }
-
-            const imageDescription = analysis.data?.description || analysis.message || '';
-            logger.info(`Image analysis: ${imageDescription}`);
-
-            // Build context for the LLM
+            // Build a message telling the LLM about the image.
+            // The LLM will use the vision skill (registered as a tool) to analyze it,
+            // determining the appropriate query based on conversation context and caption.
+            // This avoids hardcoding vision skill logic in the gateway — the LLM decides
+            // how to use the skill based on the skill spec in the system prompt.
             const userMessage = caption
-                ? `[Image with caption: "${caption}"]\nImage content: ${imageDescription}`
-                : `[Image]\nImage content: ${imageDescription}`;
+                ? `[User sent an image with caption: "${caption}"]\nImage saved at: ${imagePath}\nPlease use the vision skill to analyze this image and respond to the user.`
+                : `[User sent an image]\nImage saved at: ${imagePath}\nPlease use the vision skill to analyze this image and respond to the user.`;
 
-            // Save the image context to memory
-            this.appendMemory(jid, 'user', userMessage);
-
-            // Process through the normal message flow
+            // Process through the normal message flow (supports both tool calling and text-based skill extraction)
+            // We do NOT save to memory before calling processWithLLM because loadRecentMemory()
+            // strips trailing user messages from history — the image context would be lost.
             const phone = this.jidToPhone(jid);
-            const result = await processWithLLM(phone, caption || 'What do you see in this image?');
+            const result = await processWithLLM(phone, userMessage);
             
             if (result.success && result.response) {
-                // Check if response contains a skill action
+                // Save to memory after processing
+                this.appendMemory(jid, 'user', caption || '[Image]');
+
+                // Check if response contains a skill action (for text-based skill extraction mode)
                 const skillResult = await processSkillAction(result.response, phone);
                 
                 if (skillResult.skillExecuted) {
-                    const finalResponse = await this.processSkillResultWithLLM(phone, caption || 'What do you see?', skillResult.response, skillResult.skillResult);
+                    const finalResponse = await this.processSkillResultWithLLM(phone, userMessage, skillResult.response, skillResult.skillResult);
                     this.appendMemory(jid, 'assistant', finalResponse);
                     return finalResponse;
                 }
@@ -469,7 +465,7 @@ class WhatsAppGateway {
     async callVoiceSkill(action: 'transcribe' | 'speak' | 'voices' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
         try {
             const skillParams = { action, ...params };
-            const result = await processSkillAction(JSON.stringify({ skill: 'voice', params: skillParams }), 'system');
+            const result = await processSkillAction(JSON.stringify({ action: action, skill: 'voice', params: skillParams }), 'system');
             
             if (result.skillExecuted && result.skillResult) {
                 return {
@@ -498,7 +494,7 @@ class WhatsAppGateway {
     async callVisionSkill(action: 'analyze' | 'describe' | 'ocr' | 'status', params: Record<string, unknown>): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
         try {
             const skillParams = { action, ...params };
-            const result = await processSkillAction(JSON.stringify({ skill: 'vision', params: skillParams }), 'system');
+            const result = await processSkillAction(JSON.stringify({ action: action, skill: 'vision', params: skillParams }), 'system');
             
             if (result.skillExecuted && result.skillResult) {
                 return {

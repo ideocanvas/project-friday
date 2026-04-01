@@ -1,0 +1,15 @@
+# Voice Skill Dependencies
+# Speech-to-Text and Text-to-Speech using MLX on Apple Silicon
+
+# MLX framework for Apple Silicon acceleration
+mlx>=0.20.0
+
+# MLX Whisper for Speech-to-Text
+mlx-whisper>=0.4.0
+
+# MLX Audio for Text-to-Speech
+mlx-audio>=0.1.0
+
+# Note: ffmpeg is required for audio conversion
+# Install via: brew install ffmpeg (macOS)
+# Or: conda install ffmpeg (conda)

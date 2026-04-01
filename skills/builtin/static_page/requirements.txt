@@ -1,0 +1,5 @@
+# Static Page Skill Dependencies
+# HTML page generation using templates
+
+# Jinja2 templating engine (optional - falls back to basic templating)
+jinja2>=3.1.0

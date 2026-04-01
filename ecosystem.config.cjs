@@ -14,7 +14,8 @@ module.exports = {
             interpreter: 'node',
             node_args: '--experimental-modules',
             env: {
-                NODE_ENV: 'production'
+                NODE_ENV: 'production',
+                CONDA_ENV_NAME: 'mlx'
                 // Other env vars loaded from .env file via dotenv in code
             },
             // Restart policy
