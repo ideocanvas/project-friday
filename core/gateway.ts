@@ -256,9 +256,10 @@ class WhatsAppGateway {
             const result = await processWithLLM(phone, text, { jid });
             
             if (result.success) {
-                // If this was dispatched as a background task, log it
+                // If this was dispatched as a background task, log it (no immediate reply)
                 if (result.backgrounded && result.taskId) {
                     logger.info({ taskId: result.taskId }, 'Message dispatched as background task');
+                    return { response: '' };
                 }
                 
                 // Save assistant response to memory (if we have text)

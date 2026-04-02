@@ -74,7 +74,7 @@ interface UserProfile {
 }
 
 interface ProcessResult {
-    response: string;
+    response?: string;
     success: boolean;
     error?: string;
     /** If true, the message was dispatched as a background task */
@@ -947,7 +947,7 @@ async function dispatchBackgroundTask(
     console.log(`[MessageProcessor] Dispatched background task ${task.id} for phone ${phone}`);
     
     return {
-        response: `I'm working on that for you now. I'll let you know as soon as I have an answer. (Task ID: ${task.id})`,
+        response: undefined,
         success: true,
         backgrounded: true,
         taskId: task.id,
