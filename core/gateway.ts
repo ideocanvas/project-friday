@@ -55,6 +55,7 @@ interface QueuedMessage {
     timestamp: string;
     retry: number;
     status: 'pending' | 'sent' | 'failed';
+    audio_path?: string;
 }
 
 interface StatusData {
@@ -550,22 +551,33 @@ class WhatsAppGateway {
      */
     async sendQueuedMessage(msg: QueuedMessage): Promise<void> {
         if (!this.isReady || !this.sock) return;
-        
+
         // Use the exact JID if it contains '@', otherwise fall back to string manipulation
         const jid = msg.to.includes('@') ? msg.to : this.phoneToJid(msg.to);
-        
+
         try {
-            await this.sock.sendMessage(jid, { text: msg.message });
-            logger.info(`✅ Sent queued message to ${msg.to}`);
-            
+            if (msg.type === 'audio' && msg.audio_path) {
+                // Send audio message
+                const audioBuffer = fs.readFileSync(msg.audio_path);
+                await this.sock.sendMessage(jid, {
+                    audio: audioBuffer,
+                    mimetype: 'audio/mp3', // Assume MP3 for now
+                });
+                logger.info(`✅ Sent audio message from ${msg.audio_path} to ${msg.to}`);
+            } else {
+                // Send text message
+                await this.sock.sendMessage(jid, { text: msg.message });
+                logger.info(`✅ Sent queued message to ${msg.to}`);
+            }
+
             // Mark as sent
             this.updateQueueMessageStatus(msg.id, 'sent');
-            
+
             // Remember giving this response!
-            this.appendMemory(jid, 'assistant', msg.message);
+            this.appendMemory(jid, 'assistant', msg.message || '[Audio response]');
         } catch (error) {
             logger.error(`Failed to send message to ${msg.to}:`, error);
-            
+
             // Increment retry
             const retries = (msg.retry || 0) + 1;
             if (retries >= 3) {

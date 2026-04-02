@@ -349,6 +349,17 @@ async function runAgentLoopInBackground(task: Task): Promise<void> {
                         const results = await processToolCalls([toolCall], task.phone);
                         const result = results[0];
                         if (result) {
+                            // Check if skill returned an audio_path (for TTS/voice responses)
+                            let audioPath: string | undefined;
+                            if (result.result.data && typeof result.result.data === 'object') {
+                                const data = result.result.data as Record<string, unknown>;
+                                appendLog(task, 'debug', `Skill result data: ${JSON.stringify(data).substring(0, 500)}`);
+                                if (data.audio_path && typeof data.audio_path === 'string') {
+                                    audioPath = data.audio_path;
+                                    appendLog(task, 'info', `Found audio_path: ${audioPath}`);
+                                }
+                            }
+
                             toolResult = {
                                 content: JSON.stringify({
                                     success: result.result.success,
@@ -356,6 +367,16 @@ async function runAgentLoopInBackground(task: Task): Promise<void> {
                                     data: result.result.data,
                                 }),
                             };
+
+                            // If we got an audio_path from a voice skill, push audio message immediately
+                            if (audioPath) {
+                                appendLog(task, 'info', `Voice skill returned audio: ${audioPath}`);
+                                pushAudioTaskResultToQueue(task, audioPath);
+                                task.status = 'completed';
+                                task.result = ''; // Empty text result - audio was sent instead
+                                task.completedAt = nowISO();
+                                return;
+                            }
                         } else {
                             toolResult = {
                                 content: JSON.stringify({
@@ -524,10 +545,11 @@ function pushTaskResultToQueue(task: Task, message: string): void {
             id: string;
             to: string;
             message: string;
-            type: string;
+            type: 'text' | 'image' | 'audio';
             timestamp: string;
             retry: number;
-            status: string;
+            status: 'pending' | 'sent' | 'failed';
+            audio_path?: string;
         }> = [];
 
         if (fs.existsSync(queueFile)) {
@@ -558,5 +580,55 @@ function pushTaskResultToQueue(task: Task, message: string): void {
         appendLog(task, 'info', `Result pushed to pending_messages queue`);
     } catch (err) {
         console.error(`[TaskManager] Failed to push result to queue for task ${task.id}:`, err);
+    }
+}
+
+/**
+ * Push audio task result to queue
+ */
+function pushAudioTaskResultToQueue(task: Task, audioPath: string): void {
+    try {
+        const queueFile = path.join(QUEUE_PATH, 'pending_messages.json');
+
+        let messages: Array<{
+            id: string;
+            to: string;
+            message: string;
+            type: 'text' | 'image' | 'audio';
+            timestamp: string;
+            retry: number;
+            status: 'pending' | 'sent' | 'failed';
+            audio_path?: string;
+        }> = [];
+
+        if (fs.existsSync(queueFile)) {
+            try {
+                messages = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
+            } catch {
+                messages = [];
+            }
+        }
+
+        messages.push({
+            id: `task_${task.id}_${Date.now()}`,
+            to: task.jid || task.phone,
+            message: '', // Empty message for audio
+            type: 'audio',
+            timestamp: nowISO(),
+            retry: 0,
+            status: 'pending',
+            audio_path: audioPath,
+        });
+
+        // Ensure queue directory exists
+        const queueDir = path.dirname(queueFile);
+        if (!fs.existsSync(queueDir)) {
+            fs.mkdirSync(queueDir, { recursive: true });
+        }
+
+        fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2));
+        appendLog(task, 'info', `Audio result pushed to pending_messages queue`);
+    } catch (err) {
+        console.error(`[TaskManager] Failed to push audio result to queue for task ${task.id}:`, err);
     }
 }
