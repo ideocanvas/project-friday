@@ -21,6 +21,34 @@ const SKILLS_PATH = process.env.SKILLS_PATH || './skills';
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL_MS || '60000', 10);
 const ARBITER_LOCK_PATH = process.env.ARBITER_LOCK_PATH || './temp/gpu_active.lock';
 
+const SKILL_LOGS_ROOT = path.join(process.cwd(), 'logs', 'skills');
+
+function ensureSkillLogDir(skillName: string): string {
+    const dir = path.join(SKILL_LOGS_ROOT, skillName);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function createWriteStreamSafe(filePath: string): fs.WriteStream | null {
+    try {
+        return fs.createWriteStream(filePath, { flags: 'a' });
+    } catch {
+        return null;
+    }
+}
+
+function logHeader(outStream: fs.WriteStream | null, errStream: fs.WriteStream | null, command: string): void {
+    const timestamp = new Date().toISOString();
+    const separator = '─'.repeat(60);
+    const header = `\n${separator}\n[${timestamp}] ${command}\n${separator}\n`;
+    if (outStream) outStream.write(header);
+    if (errStream) errStream.write(header);
+}
+
+function closeStream(stream: fs.WriteStream | null): void {
+    if (stream) stream.end();
+}
+
 // Skills that require GPU lock
 const GPU_SKILLS: string[] = ['voice', 'gold_tracker', 'stock_alert'];
 
@@ -180,7 +208,12 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
     const payload = JSON.stringify({ userId, ...args });
     
     console.log(`Executing skill: ${skillName} (${isPython ? 'Python' : 'Node.js'})`);
-    
+
+    const logDir = ensureSkillLogDir(skillName);
+    const outStream = createWriteStreamSafe(path.join(logDir, 'out.log'));
+    const errStream = createWriteStreamSafe(path.join(logDir, 'err.log'));
+    logHeader(outStream, errStream, `Executing skill: ${skillName} (${isPython ? 'Python' : 'Node.js'})`);
+
     if (isPython) {
         // Use Conda environment
         const proc: ChildProcess = spawn('conda', ['run', '-n', 'friday-skills', 'python', skillPath, payload], {
@@ -189,7 +222,9 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
         });
         
         proc.stdout?.on('data', (data: Buffer) => {
-            const output = data.toString().trim();
+            const chunk = data.toString();
+            if (outStream) outStream.write(chunk);
+            const output = chunk.trim();
             if (output) {
                 try {
                     const result: SkillResult = JSON.parse(output);
@@ -203,10 +238,18 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
         });
         
         proc.stderr?.on('data', (data: Buffer) => {
+            const chunk = data.toString();
             console.error(`Skill error: ${data}`);
+            if (errStream) errStream.write(chunk);
         });
         
-        proc.on('close', () => {
+        proc.on('close', (code) => {
+            const timestamp = new Date().toISOString();
+            const footer = `\n[${timestamp}] Exit code: ${code}\n${'─'.repeat(60)}\n`;
+            if (outStream) outStream.write(footer);
+            if (errStream) errStream.write(footer);
+            closeStream(outStream);
+            closeStream(errStream);
             if (GPU_SKILLS.includes(skillName)) {
                 releaseGpuLock();
             }
@@ -220,17 +263,27 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
         });
         
         proc.stdout?.on('data', (data: Buffer) => {
-            const output = data.toString().trim();
+            const chunk = data.toString();
+            if (outStream) outStream.write(chunk);
+            const output = chunk.trim();
             if (output) {
                 queueMessage(userId, output);
             }
         });
         
         proc.stderr?.on('data', (data: Buffer) => {
+            const chunk = data.toString();
             console.error(`Skill error: ${data}`);
+            if (errStream) errStream.write(chunk);
         });
         
-        proc.on('close', () => {
+        proc.on('close', (code) => {
+            const timestamp = new Date().toISOString();
+            const footer = `\n[${timestamp}] Exit code: ${code}\n${'─'.repeat(60)}\n`;
+            if (outStream) outStream.write(footer);
+            if (errStream) errStream.write(footer);
+            closeStream(outStream);
+            closeStream(errStream);
             if (GPU_SKILLS.includes(skillName)) {
                 releaseGpuLock();
             }

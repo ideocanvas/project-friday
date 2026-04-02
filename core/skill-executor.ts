@@ -14,8 +14,34 @@ import type { ToolCall } from './tool-calling.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configuration
 const SKILLS_PATH = process.env.SKILLS_PATH || './skills';
+const SKILL_LOGS_ROOT = path.join(process.cwd(), 'logs', 'skills');
+
+function ensureSkillLogDir(skillName: string): string {
+    const dir = path.join(SKILL_LOGS_ROOT, skillName);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function createWriteStreamSafe(filePath: string): fs.WriteStream | null {
+    try {
+        return fs.createWriteStream(filePath, { flags: 'a' });
+    } catch {
+        return null;
+    }
+}
+
+function logHeader(outStream: fs.WriteStream | null, errStream: fs.WriteStream | null, command: string): void {
+    const timestamp = new Date().toISOString();
+    const separator = '─'.repeat(60);
+    const header = `\n${separator}\n[${timestamp}] ${command}\n${separator}\n`;
+    if (outStream) outStream.write(header);
+    if (errStream) errStream.write(header);
+}
+
+function closeStream(stream: fs.WriteStream | null): void {
+    if (stream) stream.end();
+}
 
 // Cached conda Python path (resolved once on first use)
 let cachedCondaPython: string | null = null;
@@ -232,7 +258,12 @@ export async function executeSkill(
         
         const fullCommand = `${command} ${args.join(' ')}`;
         console.log(`[Skill] Executing: ${fullCommand}`);
-        
+
+        const logDir = ensureSkillLogDir(skillName);
+        const outStream = createWriteStreamSafe(path.join(logDir, 'out.log'));
+        const errStream = createWriteStreamSafe(path.join(logDir, 'err.log'));
+        logHeader(outStream, errStream, fullCommand);
+
         const child = spawn(command, args, {
             cwd: process.cwd(),
             env: process.env,
@@ -242,14 +273,25 @@ export async function executeSkill(
         let stderr = '';
         
         child.stdout.on('data', (data) => {
-            stdout += data.toString();
+            const chunk = data.toString();
+            stdout += chunk;
+            if (outStream) outStream.write(chunk);
         });
         
         child.stderr.on('data', (data) => {
-            stderr += data.toString();
+            const chunk = data.toString();
+            stderr += chunk;
+            if (errStream) errStream.write(chunk);
         });
         
         child.on('close', (code) => {
+            const timestamp = new Date().toISOString();
+            const footer = `\n[${timestamp}] Exit code: ${code}\n${'─'.repeat(60)}\n`;
+            if (outStream) outStream.write(footer);
+            if (errStream) errStream.write(footer);
+            closeStream(outStream);
+            closeStream(errStream);
+
             if (code !== 0) {
                 // Try to extract the real error from stdout (Python skills output errors as JSON to stdout)
                 let errorDetail = stderr || 'Unknown error';
@@ -286,6 +328,8 @@ export async function executeSkill(
         });
         
         child.on('error', (error) => {
+            closeStream(outStream);
+            closeStream(errStream);
             resolve({
                 success: false,
                 message: `Failed to execute skill: ${error.message}`,
