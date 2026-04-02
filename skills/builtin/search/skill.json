@@ -1,6 +1,7 @@
 {
   "id": "search",
   "name": "Google Search",
+  "enabled": false,
   "description": "Search the web for current information, news, and data using Google Custom Search API",
   "file": "index.js",
   "type": "builtin",

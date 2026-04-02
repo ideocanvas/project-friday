@@ -149,6 +149,11 @@ function loadRegistry(): SkillsRegistry {
                         [key: string]: unknown;
                     };
                     
+                    // Skip disabled skills
+                    if (skillDef.enabled === false) {
+                        continue;
+                    }
+                    
                     // Resolve file path relative to the skill directory
                     const resolvedFile = path.join(dirPath, entry.name, skillDef.file);
                     const skillId = skillDef.id || entry.name;

@@ -197,6 +197,19 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
         console.error(`Skill not found: ${skillName}`);
         return;
     }
+
+    const skillJsonPath = isBuiltin
+        ? path.join(SKILLS_PATH, 'builtin', skillName, 'skill.json')
+        : null;
+    if (skillJsonPath && fs.existsSync(skillJsonPath)) {
+        try {
+            const skillDef = JSON.parse(fs.readFileSync(skillJsonPath, 'utf8')) as { enabled?: boolean };
+            if (skillDef.enabled === false) {
+                console.log(`Skill ${skillName} is disabled, skipping`);
+                return;
+            }
+        } catch { /* ignore parse errors */ }
+    }
     
     // Check GPU lock for GPU-intensive skills
     if (GPU_SKILLS.includes(skillName)) {

@@ -1,6 +1,7 @@
 {
   "id": "browser",
   "name": "Live Browser",
+  "enabled": false,
   "description": "Interact with websites, take screenshots, scrape data, and discover page structure for LLM usability",
   "file": "index.js",
   "type": "builtin",
