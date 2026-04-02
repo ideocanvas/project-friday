@@ -9,7 +9,7 @@ This keeps all LLM interaction prompts in one place for easy maintenance.
 from typing import Optional, List, Dict, Any
 
 
-def plan_research_prompt(query: str, mode: str = 'deep') -> str:
+def plan_research_prompt(query: str, mode: str = "deep") -> str:
     """
     Prompt for the LLM to create a research plan from a user query.
 
@@ -20,7 +20,7 @@ def plan_research_prompt(query: str, mode: str = 'deep') -> str:
     Returns:
         Formatted prompt string
     """
-    max_sources = 2 if mode == 'quick' else 5
+    max_sources = 2 if mode == "quick" else 3
 
     return f"""Analyze this research query and create a search plan.
 
@@ -82,8 +82,9 @@ Guidelines:
 Return ONLY the JSON object, no other text."""
 
 
-def extract_info_prompt(query: str, page_title: str, page_text: str,
-                       focus_areas: List[str]) -> str:
+def extract_info_prompt(
+    query: str, page_title: str, page_text: str, focus_areas: List[str]
+) -> str:
     """
     Prompt for the LLM to extract relevant information from a page.
 
@@ -97,7 +98,7 @@ def extract_info_prompt(query: str, page_title: str, page_text: str,
         Formatted prompt string
     """
     # Truncate page text to avoid exceeding context limits
-    max_text = 8000
+    max_text = 4000
     if len(page_text) > max_text:
         page_text = page_text[:max_text] + "\n\n[... content truncated]"
 
@@ -134,8 +135,9 @@ Guidelines:
 Return ONLY the JSON object, no other text."""
 
 
-def evaluate_sufficiency_prompt(query: str, findings: List[Dict[str, Any]],
-                                iteration: int, max_iterations: int) -> str:
+def evaluate_sufficiency_prompt(
+    query: str, findings: List[Dict[str, Any]], iteration: int, max_iterations: int
+) -> str:
     """
     Prompt for the LLM to evaluate if current findings are sufficient.
 
@@ -174,16 +176,18 @@ Return a JSON object with:
 }}
 
 Guidelines:
-- Be thorough — only mark sufficient if the query can be well-answered
-- Consider if sources agree (cross-reference)
-- If confidence is low, suggest a follow-up search
-- If iteration is near max, be more lenient
+- For simple queries, mark sufficient if you have consistent answers from 2+ sources
+- Be thorough but decisive — mark sufficient if the core query can be answered
+- Consider source agreement and quality
+- Only suggest follow-up if critical gaps remain
+- For quick mode, prefer sufficiency after 2 sources
 
 Return ONLY the JSON object, no other text."""
 
 
-def synthesize_prompt(query: str, findings: List[Dict[str, Any]],
-                      mode: str = 'deep') -> str:
+def synthesize_prompt(
+    query: str, findings: List[Dict[str, Any]], mode: str = "deep"
+) -> str:
     """
     Prompt for the LLM to synthesize final answer from all findings.
 
@@ -201,7 +205,7 @@ def synthesize_prompt(query: str, findings: List[Dict[str, Any]],
         sources_text += f"\nURL: {f.get('url', 'N/A')}"
         sources_text += f"\nQuality: {f.get('source_quality', 'unknown')}"
         sources_text += f"\nKey Info: {f.get('relevant_info', 'No info extracted')}"
-        facts = f.get('key_facts', [])
+        facts = f.get("key_facts", [])
         if facts:
             sources_text += "\nKey Facts:"
             for fact in facts:
@@ -265,6 +269,7 @@ Return ONLY the JSON object, no other text."""
 def json_dumps_safe(obj) -> str:
     """Safely convert object to JSON string for prompt inclusion."""
     import json
+
     try:
         return json.dumps(obj, ensure_ascii=False)
     except (TypeError, ValueError):

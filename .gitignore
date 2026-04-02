@@ -28,6 +28,9 @@ temp/
 *.tmp
 *.log
 
+# Deep Research Memory (runtime data)
+skills/builtin/deep_research/memory/
+
 # GPU Lock
 gpu_active.lock
 
