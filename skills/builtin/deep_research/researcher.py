@@ -44,6 +44,8 @@ CLOUDFLARE_TUNNEL_URL = os.getenv("CLOUDFLARE_TUNNEL_URL", "http://localhost:300
 MAX_TEXT_LENGTH_FOR_PAGE = int(os.getenv("DEEP_RESEARCH_TEXT_THRESHOLD", "1000"))
 MEMORY_DIR = Path(__file__).parent / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
+BUILTIN_MEMORY_DIR = Path(__file__).parent / "builtin_memory"
+BUILTIN_MEMORY_DIR.mkdir(exist_ok=True)
 
 
 class ResearchResult:
@@ -172,6 +174,22 @@ class DeepResearcher:
                 print(f"[Researcher] Failed to load memory: {e}")
                 self.memory = None
 
+    def _load_builtin_memory(self):
+        """Load built-in memory for common queries."""
+        import re
+
+        for mem_file in BUILTIN_MEMORY_DIR.glob("*.json"):
+            try:
+                with open(mem_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                pattern = data.get("query_pattern", "")
+                if re.search(pattern, self.query, re.IGNORECASE):
+                    print(f"[Researcher] Loaded builtin memory: {mem_file.name}")
+                    return data
+            except Exception as e:
+                print(f"[Researcher] Failed to load builtin memory {mem_file}: {e}")
+        return None
+
     def _save_memory(self, result: ResearchResult):
         if not self.findings:
             return
@@ -218,14 +236,20 @@ class DeepResearcher:
         try:
             self._create_temp_dir()
             self._load_memory()
+            if not self.memory:
+                self.memory = self._load_builtin_memory()
 
-            # Check if we can use recent memory (skip for real-time queries)
-            if self.memory and not self._is_realtime_query(self.query):
+            # Check if we can use memory
+            if self.memory:
                 mem_time = datetime.fromisoformat(self.memory["timestamp"][:-1])
                 now = datetime.utcnow()
                 age_hours = (now - mem_time).total_seconds() / 3600
-                if age_hours < 1:  # Reuse if less than 1 hour old
-                    print(f"[Researcher] Using recent memory ({age_hours:.1f}h old)")
+                # For builtin memory, allow reuse for real-time queries
+                is_builtin = "preferred_sources" in self.memory
+                if not is_builtin and age_hours < 1:
+                    print(
+                        f"[Researcher] Using memory ({age_hours:.1f}h old, builtin: {is_builtin})"
+                    )
                     result.findings = self.memory["findings"]
                     result.summary = self.memory["summary"]
                     result.sources_visited = self.memory["sources_visited"]
@@ -245,10 +269,22 @@ class DeepResearcher:
                     "expected_answer_type": "summary",
                 }
 
-            search_terms = plan.get("search_terms", [self.query])
-            search_type = plan.get("search_type", "web")
-            date_range = plan.get("date_range")
-            focus_areas = plan.get("focus_areas", [self.query])
+            # If builtin memory has preferred sources, use them as direct URLs
+            if self.memory and "preferred_sources" in self.memory:
+                search_terms = [src["url"] for src in self.memory["preferred_sources"]]
+                search_type = "direct"  # Special type to visit URLs directly
+                date_range = None
+                print(f"[Researcher] Using builtin sources: {search_terms}")
+            else:
+                search_terms = plan.get("search_terms", [self.query])
+                search_type = plan.get("search_type", "web")
+                date_range = plan.get("date_range")
+
+            focus_areas = (
+                self.memory.get("focus_areas", [])
+                if self.memory and "focus_areas" in self.memory
+                else plan.get("focus_areas", [self.query])
+            )
 
             # Step 2: Research loop
             search_term_index = 0
@@ -263,28 +299,39 @@ class DeepResearcher:
                 # Choose search term
                 current_search = search_terms[search_term_index % len(search_terms)]
 
-                # Step 2a: Search
-                print(f"[Researcher] Searching: {current_search}")
-                if search_type == "news":
-                    search_result = search(
-                        current_search, num_results=5, date_range=date_range or "week"
-                    )
+                # Step 2a: Search or use direct URLs
+                if search_type == "direct":
+                    # Direct URLs from builtin memory
+                    search_result = {"success": True, "results": []}
+                    ranked_indices = list(range(1, len(search_terms) + 1))
                 else:
-                    search_result = search(current_search, num_results=5)
+                    print(f"[Researcher] Searching: {current_search}")
+                    if search_type == "news":
+                        search_result = search(
+                            current_search,
+                            num_results=5,
+                            date_range=date_range or "week",
+                        )
+                    else:
+                        search_result = search(current_search, num_results=5)
 
-                if not search_result.get("success") or not search_result.get("results"):
-                    error_msg = search_result.get("error", "No results found")
-                    self.errors.append(f"Search failed: {error_msg}")
-                    print(f"[Researcher] Search failed: {error_msg}")
-                    search_term_index += 1
-                    if search_term_index >= len(search_terms):
-                        break
-                    continue
+                    if not search_result.get("success") or not search_result.get(
+                        "results"
+                    ):
+                        error_msg = search_result.get("error", "No results found")
+                        self.errors.append(f"Search failed: {error_msg}")
+                        print(f"[Researcher] Search failed: {error_msg}")
+                        search_term_index += 1
+                        if search_term_index >= len(search_terms):
+                            break
+                        continue
 
-                # Step 2b: Rank URLs
-                ranked_indices = self._rank_urls(search_result["results"])
-                if not ranked_indices:
-                    ranked_indices = list(range(1, len(search_result["results"]) + 1))
+                    # Step 2b: Rank URLs
+                    ranked_indices = self._rank_urls(search_result["results"])
+                    if not ranked_indices:
+                        ranked_indices = list(
+                            range(1, len(search_result["results"]) + 1)
+                        )
 
                 # Step 2c: Visit top sources
                 found_new_source = False
@@ -292,8 +339,12 @@ class DeepResearcher:
                     if len(self.findings) >= self.max_sources:
                         break
 
-                    url = search_result["results"][idx - 1].get("url", "")
-                    title = search_result["results"][idx - 1].get("title", "")
+                    if search_type == "direct":
+                        url = search_terms[idx - 1]
+                        title = ""  # Will be filled by browser
+                    else:
+                        url = search_result["results"][idx - 1].get("url", "")
+                        title = search_result["results"][idx - 1].get("title", "")
 
                     if not url or url in self.visited_urls:
                         continue

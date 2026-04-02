@@ -1,0 +1,23 @@
+{
+  "query_pattern": ".*\\.HK.*price|price.*\\.HK|stock.*\\.HK|01810\\.HK",
+  "type": "stock",
+  "preferred_sources": [
+    {
+      "url": "https://www.hkex.com.hk/Market-Data/Securities-Prices/Equities/Equities-Quote?sym=1810&sc_lang=en",
+      "title": "HKEX Xiaomi Stock Quote",
+      "description": "Official Hong Kong Stock Exchange quote page"
+    },
+    {
+      "url": "https://finance.yahoo.com/quote/1810.HK/",
+      "title": "Yahoo Finance Xiaomi",
+      "description": "Comprehensive stock data and analysis"
+    },
+    {
+      "url": "https://www.investing.com/equities/xiaomi-corp",
+      "title": "Investing.com Xiaomi",
+      "description": "Real-time stock quotes and charts"
+    }
+  ],
+  "search_fallback": true,
+  "timestamp": "2026-04-03T00:18:17Z"
+}

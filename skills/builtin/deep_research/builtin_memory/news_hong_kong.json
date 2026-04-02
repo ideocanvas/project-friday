@@ -1,0 +1,14 @@
+{
+  "query_pattern": "news.*hong.kong|hong.kong.*news|top news.*hong kong",
+  "type": "news",
+  "preferred_sources": [
+    {
+      "url": "https://news.google.com/rss?hl=en-HK&gl=HK&ceid=HK:en",
+      "title": "Google News - Hong Kong",
+      "description": "Latest Hong Kong news from Google News RSS"
+    }
+  ],
+  "focus_areas": ["Hong Kong news", "local Hong Kong events", "Hong Kong politics", "Hong Kong economy"]
+  "search_fallback": true,
+  "timestamp": "2026-04-03T00:23:58Z"
+}

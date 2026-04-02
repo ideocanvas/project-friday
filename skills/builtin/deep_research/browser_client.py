@@ -12,15 +12,19 @@ falls back to launching Chromium.
 import os
 import time
 import asyncio
+import requests
+import xml.etree.ElementTree as ET
 from typing import Optional, Dict, Any, List, Tuple
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Configuration
-CDP_ENDPOINT = os.getenv('BROWSER_CDP_ENDPOINT', 'http://localhost:9222')
-BROWSER_TIMEOUT_MS = int(os.getenv('BROWSER_TIMEOUT_MS', '30000'))
-MAX_CONTENT_LENGTH = int(os.getenv('BROWSER_MAX_CONTENT_LENGTH', '50000'))  # 50KB text limit
+CDP_ENDPOINT = os.getenv("BROWSER_CDP_ENDPOINT", "http://localhost:9222")
+BROWSER_TIMEOUT_MS = int(os.getenv("BROWSER_TIMEOUT_MS", "30000"))
+MAX_CONTENT_LENGTH = int(
+    os.getenv("BROWSER_MAX_CONTENT_LENGTH", "50000")
+)  # 50KB text limit
 
 # Module-level browser state
 _browser = None
@@ -28,11 +32,60 @@ _context = None
 _page = None
 
 
+def is_rss_url(url: str) -> bool:
+    """Check if URL is likely an RSS feed."""
+    url_lower = url.lower()
+    return any(indicator in url_lower for indicator in ["rss", ".xml", "/feed"])
+
+
+async def fetch_rss(url: str) -> Optional[str]:
+    """Fetch and parse RSS feed content."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        # Parse XML
+        root = ET.fromstring(response.content)
+
+        # Extract items (news entries)
+        items = []
+        for item in root.findall(".//item")[:10]:  # Top 10 items
+            title = item.find("title")
+            description = item.find("description")
+            link = item.find("link")
+            pub_date = item.find("pubDate")
+
+            item_text = ""
+            if title is not None:
+                item_text += f"Title: {title.text}\n"
+            if description is not None:
+                item_text += f"Description: {description.text}\n"
+            if link is not None:
+                item_text += f"Link: {link.text}\n"
+            if pub_date is not None:
+                item_text += f"Published: {pub_date.text}\n"
+            item_text += "\n"
+            items.append(item_text)
+
+        if items:
+            content = f"RSS Feed: {url}\n\n" + "\n".join(items)
+            return content[:MAX_CONTENT_LENGTH]  # Limit size
+        else:
+            return None
+
+    except Exception as e:
+        print(f"[BrowserClient] RSS fetch failed: {e}")
+        return None
+
+
 def _truncate_text(text: str, max_length: int = MAX_CONTENT_LENGTH) -> str:
     """Truncate text to max length with indicator."""
     if len(text) <= max_length:
         return text
-    return text[:max_length] + f'\n\n[... truncated at {max_length} chars, total {len(text)} chars]'
+    return (
+        text[:max_length]
+        + f"\n\n[... truncated at {max_length} chars, total {len(text)} chars]"
+    )
 
 
 def _is_safe_url(url: str) -> bool:
@@ -40,12 +93,12 @@ def _is_safe_url(url: str) -> bool:
     if not url:
         return False
     # Block dangerous protocols
-    dangerous = ['file://', 'ftp://', 'javascript:']
+    dangerous = ["file://", "ftp://", "javascript:"]
     for proto in dangerous:
         if url.lower().startswith(proto):
             return False
     # Must have http or https
-    if not url.lower().startswith(('http://', 'https://')):
+    if not url.lower().startswith(("http://", "https://")):
         return False
     return True
 
@@ -66,7 +119,9 @@ async def _ensure_browser() -> Tuple[Any, Any, Any]:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        raise ImportError("playwright not installed. Run: pip install playwright && playwright install chromium")
+        raise ImportError(
+            "playwright not installed. Run: pip install playwright && playwright install chromium"
+        )
 
     pw = await async_playwright().start()
 
@@ -78,21 +133,22 @@ async def _ensure_browser() -> Tuple[Any, Any, Any]:
         print(f"[BrowserClient] CDP connection failed ({e}), launching Chromium...")
         _browser = await pw.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox'],
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
         )
 
     # Create context and page
     _context = await _browser.new_context(
-        viewport={'width': 1280, 'height': 720},
-        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport={"width": 1280, "height": 720},
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     )
     _page = await _context.new_page()
 
     return _browser, _context, _page
 
 
-async def browse_url(url: str, wait_until: str = 'domcontentloaded',
-                     timeout: int = BROWSER_TIMEOUT_MS) -> Dict[str, Any]:
+async def browse_url(
+    url: str, wait_until: str = "domcontentloaded", timeout: int = BROWSER_TIMEOUT_MS
+) -> Dict[str, Any]:
     """
     Navigate to a URL and extract page content.
 
@@ -106,9 +162,21 @@ async def browse_url(url: str, wait_until: str = 'domcontentloaded',
     """
     if not _is_safe_url(url):
         return {
-            'success': False,
-            'error': f'Unsafe or invalid URL: {url}',
+            "success": False,
+            "error": f"Unsafe or invalid URL: {url}",
         }
+
+    # Try RSS fetch first for RSS URLs
+    if is_rss_url(url):
+        rss_content = await fetch_rss(url)
+        if rss_content:
+            return {
+                "success": True,
+                "url": url,
+                "title": f"RSS Feed - {url}",
+                "text": rss_content,
+                "links": [],
+            }
 
     try:
         browser, context, page = await _ensure_browser()
@@ -121,7 +189,7 @@ async def browse_url(url: str, wait_until: str = 'domcontentloaded',
         title = await page.title()
 
         # Extract text content
-        text = await page.evaluate('''() => {
+        text = await page.evaluate("""() => {
             // Try to get main content, falling back to body text
             const selectors = ['article', 'main', '.content', '#content', '.post-body', '.article-body'];
             for (const sel of selectors) {
@@ -132,34 +200,34 @@ async def browse_url(url: str, wait_until: str = 'domcontentloaded',
             }
             // Fallback: body text
             return document.body ? document.body.innerText : '';
-        }''')
+        }""")
 
         text = _truncate_text(text)
 
         # Extract links
-        links = await page.evaluate('''() => {
+        links = await page.evaluate("""() => {
             const links = Array.from(document.querySelectorAll('a[href]'));
             return links.slice(0, 50).map(a => ({
                 text: a.innerText.trim().substring(0, 100),
                 href: a.href,
             })).filter(l => l.text.length > 0 && l.href.startsWith('http'));
-        }''')
+        }""")
 
         return {
-            'success': True,
-            'url': url,
-            'title': title,
-            'status': status,
-            'text': text,
-            'text_length': len(text),
-            'links': links,
+            "success": True,
+            "url": url,
+            "title": title,
+            "status": status,
+            "text": text,
+            "text_length": len(text),
+            "links": links,
         }
 
     except Exception as e:
         return {
-            'success': False,
-            'url': url,
-            'error': f'Browser error: {str(e)}',
+            "success": False,
+            "url": url,
+            "error": f"Browser error: {str(e)}",
         }
 
 
@@ -168,23 +236,23 @@ async def get_links() -> Dict[str, Any]:
     try:
         _, _, page = await _ensure_browser()
 
-        links = await page.evaluate('''() => {
+        links = await page.evaluate("""() => {
             const links = Array.from(document.querySelectorAll('a[href]'));
             return links.slice(0, 100).map(a => ({
                 text: a.innerText.trim().substring(0, 100),
                 href: a.href,
             })).filter(l => l.text.length > 0 && l.href.startsWith('http'));
-        }''')
+        }""")
 
         return {
-            'success': True,
-            'count': len(links),
-            'links': links,
+            "success": True,
+            "count": len(links),
+            "links": links,
         }
     except Exception as e:
         return {
-            'success': False,
-            'error': str(e),
+            "success": False,
+            "error": str(e),
         }
 
 
@@ -193,9 +261,9 @@ async def get_page_title() -> Dict[str, Any]:
     try:
         _, _, page = await _ensure_browser()
         title = await page.title()
-        return {'success': True, 'title': title}
+        return {"success": True, "title": title}
     except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return {"success": False, "error": str(e)}
 
 
 async def get_page_url() -> Dict[str, Any]:
@@ -203,9 +271,9 @@ async def get_page_url() -> Dict[str, Any]:
     try:
         _, _, page = await _ensure_browser()
         url = page.url
-        return {'success': True, 'url': url}
+        return {"success": True, "url": url}
     except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return {"success": False, "error": str(e)}
 
 
 async def close_browser():

@@ -1,0 +1,23 @@
+{
+  "query_pattern": "weather.*hong.kong|hong.kong.*weather|current weather.*hong kong",
+  "type": "weather",
+  "preferred_sources": [
+    {
+      "url": "https://www.hko.gov.hk/en/wxinfo/json/one_json.xml",
+      "title": "Hong Kong Observatory Weather API",
+      "description": "Official weather data from HKO"
+    },
+    {
+      "url": "https://api.openweathermap.org/data/2.5/weather?q=Hong+Kong&appid=YOUR_API_KEY",
+      "title": "OpenWeatherMap API",
+      "description": "Global weather API (requires API key)"
+    },
+    {
+      "url": "https://www.accuweather.com/en/hk/hong-kong/1123655/current-weather/1123655",
+      "title": "AccuWeather Hong Kong",
+      "description": "Detailed weather forecasts and current conditions"
+    }
+  ],
+  "search_fallback": true,
+  "timestamp": "2026-04-03T00:18:17Z"
+}
