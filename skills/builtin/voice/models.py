@@ -217,10 +217,13 @@ class WhisperModelLoader(MLXModelLoader):
         start_time = time.time()
 
         try:
-            # Try mlx_audio first
-            from mlx_audio.whisper import load_model
+            # Use mlx_whisper (matches reference app.py)
+            import mlx_whisper
 
-            model = load_model(model_name)
+            # mlx_whisper doesn't have a separate load_model function
+            # Models are loaded on-demand during transcribe()
+            # Just return a placeholder to indicate model is available
+            model = {"type": "mlx_whisper", "name": model_name}
 
             # Estimate model size based on name
             size_mb = {
