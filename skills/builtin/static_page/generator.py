@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 # Try to import Jinja2, fall back to basic templating if not available
 try:
     from jinja2 import Environment, FileSystemLoader, Template
+
     JINJA2_AVAILABLE = True
 except ImportError:
     JINJA2_AVAILABLE = False
@@ -22,31 +23,31 @@ except ImportError:
 from image_handler import ImageHandler
 
 # Configuration
-WEB_PORTAL_PATH = os.getenv('WEB_PORTAL_PATH', './web_portal')
-CLOUDFLARE_TUNNEL_URL = os.getenv('CLOUDFLARE_TUNNEL_URL', '')
-PAGE_EXPIRY_HOURS = int(os.getenv('PAGE_EXPIRY_HOURS', '24'))
-MAX_DATA_SIZE_BYTES = int(os.getenv('MAX_DATA_SIZE_BYTES', '1048576'))  # 1MB
+WEB_PORTAL_PATH = os.getenv("WEB_PORTAL_PATH", "./web_portal")
+CLOUDFLARE_TUNNEL_URL = os.getenv("CLOUDFLARE_TUNNEL_URL", "")
+PAGE_EXPIRY_HOURS = int(os.getenv("PAGE_EXPIRY_HOURS", "24"))
+MAX_DATA_SIZE_BYTES = int(os.getenv("MAX_DATA_SIZE_BYTES", "1048576"))  # 1MB
 
 # Template directory
-TEMPLATE_DIR = Path(__file__).parent / 'templates'
+TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
 class StaticPageGenerator:
     """Generate static HTML pages from data."""
-    
+
     def __init__(self):
         self.web_portal_path = Path(WEB_PORTAL_PATH)
         self.template_dir = TEMPLATE_DIR
-        
+
         if JINJA2_AVAILABLE and self.template_dir.exists():
             self.env = Environment(loader=FileSystemLoader(str(self.template_dir)))
         else:
             self.env = None
-    
+
     def detect_template(self, data: Any) -> str:
         """
         Auto-detect template based on data structure.
-        
+
         | Data Pattern                            | Template                |
         | Object with 'content' or 'sections'     | document.html           |
         | Array of objects with date + value      | chart.html (line chart) |
@@ -56,62 +57,66 @@ class StaticPageGenerator:
         | Multiple sections                        | dashboard.html          |
         """
         if not data:
-            return 'default'
-        
+            return "default"
+
         if isinstance(data, dict):
             # Check for document/blog pattern
-            if 'content' in data or 'sections' in data or 'body' in data:
-                return 'document'
-            
+            if "content" in data or "sections" in data or "body" in data:
+                return "document"
+
             # Check for dashboard pattern
-            if 'widgets' in data:
-                return 'dashboard'
-            
+            if "widgets" in data:
+                return "dashboard"
+
             # Check for table pattern
-            if 'headers' in data and 'rows' in data:
-                return 'table'
-            
+            if "headers" in data and "rows" in data:
+                return "table"
+
             # Check for chart pattern
-            if 'type' in data:
-                return data.get('type', 'chart')
-            
+            if "type" in data:
+                return data.get("type", "chart")
+
             # Check for chart data
-            chart_data = data.get('data', data)
+            chart_data = data.get("data", data)
             if isinstance(chart_data, list) and chart_data:
                 first_item = chart_data[0]
                 if isinstance(first_item, dict):
-                    if 'date' in first_item or 'time' in first_item:
-                        return 'chart'
-                    if 'label' in first_item or 'name' in first_item:
-                        return 'chart'
-        
+                    if "date" in first_item or "time" in first_item:
+                        return "chart"
+                    if "label" in first_item or "name" in first_item:
+                        return "chart"
+
         if isinstance(data, list) and data:
             first_item = data[0]
             if isinstance(first_item, dict):
                 # Check for time-series data
-                if 'date' in first_item or 'time' in first_item or 'timestamp' in first_item:
-                    return 'chart'
+                if (
+                    "date" in first_item
+                    or "time" in first_item
+                    or "timestamp" in first_item
+                ):
+                    return "chart"
                 # Check for labeled data
-                if 'label' in first_item or 'name' in first_item:
-                    return 'chart'
+                if "label" in first_item or "name" in first_item:
+                    return "chart"
                 # Default to table for object arrays
-                return 'table'
-        
-        return 'list'
-    
+                return "table"
+
+        return "list"
+
     def validate_data_size(self, data: Any) -> bool:
         """Check if data is within size limits."""
         try:
             data_str = json.dumps(data)
-            return len(data_str.encode('utf-8')) <= MAX_DATA_SIZE_BYTES
+            return len(data_str.encode("utf-8")) <= MAX_DATA_SIZE_BYTES
         except:
             return False
-    
+
     def generate_hash(self, data: Any, user_id: str) -> str:
         """Generate unique hash for page."""
         content = f"{user_id}:{json.dumps(data, sort_keys=True)}:{datetime.now(timezone.utc).isoformat()}"
         return hashlib.md5(content.encode()).hexdigest()[:8]
-    
+
     def render_template(self, template_name: str, context: Dict[str, Any]) -> str:
         """Render a template with context."""
         if self.env and JINJA2_AVAILABLE:
@@ -121,55 +126,57 @@ class StaticPageGenerator:
             except Exception as e:
                 # Fall back to inline template
                 pass
-        
+
         # Inline fallback templates
         return self._render_inline(template_name, context)
-    
+
     def _render_inline(self, template_name: str, context: Dict[str, Any]) -> str:
         """Render inline template (fallback when Jinja2 unavailable)."""
         templates = {
-            'chart': self._get_chart_template(),
-            'table': self._get_table_template(),
-            'list': self._get_list_template(),
-            'dashboard': self._get_dashboard_template(),
-            'document': self._get_document_template(),
-            'default': self._get_default_template()
+            "chart": self._get_chart_template(),
+            "table": self._get_table_template(),
+            "list": self._get_list_template(),
+            "dashboard": self._get_dashboard_template(),
+            "document": self._get_document_template(),
+            "default": self._get_default_template(),
         }
-        
-        template = templates.get(template_name, templates['default'])
-        
+
+        template = templates.get(template_name, templates["default"])
+
         # Simple placeholder replacement
         result = template
         for key, value in context.items():
             if isinstance(value, str):
-                result = result.replace('{{ ' + key + ' }}', value)
-                result = result.replace('{{' + key + '}}', value)
+                result = result.replace("{{ " + key + " }}", value)
+                result = result.replace("{{" + key + "}}", value)
             elif isinstance(value, (dict, list)):
-                result = result.replace('{{ ' + key + ' }}', json.dumps(value))
-                result = result.replace('{{' + key + '}}', json.dumps(value))
-        
+                result = result.replace("{{ " + key + " }}", json.dumps(value))
+                result = result.replace("{{" + key + "}}", json.dumps(value))
+
         # Replace timestamp
-        result = result.replace('{{ timestamp }}', 
-                               datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))
-        
+        result = result.replace(
+            "{{ timestamp }}", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        )
+
         # Handle conditional blocks: {% if key %}...{% endif %}
         import re
+
         def replace_conditional(match):
             condition_key = match.group(1)
             content = match.group(2)
             # Check if condition is truthy in context
             if condition_key in context and context[condition_key]:
                 return content
-            return ''
-        
+            return ""
+
         # Match {% if key %}content{% endif %}
-        pattern = r'\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}'
+        pattern = r"\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}"
         result = re.sub(pattern, replace_conditional, result, flags=re.DOTALL)
-        
+
         return result
-    
+
     def _get_chart_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -211,10 +218,10 @@ class StaticPageGenerator:
         new Chart(ctx, chartConfig);
     </script>
 </body>
-</html>'''
-    
+</html>"""
+
     def _get_table_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -265,10 +272,10 @@ class StaticPageGenerator:
         </div>
     </div>
 </body>
-</html>'''
-    
+</html>"""
+
     def _get_list_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -325,10 +332,10 @@ class StaticPageGenerator:
         </div>
     </div>
 </body>
-</html>'''
-    
+</html>"""
+
     def _get_dashboard_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -378,10 +385,10 @@ class StaticPageGenerator:
         {{ widget_scripts }}
     </script>
 </body>
-</html>'''
-    
+</html>"""
+
     def _get_default_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -432,10 +439,10 @@ class StaticPageGenerator:
         <div class="footer">Generated by Friday AI Assistant</div>
     </div>
 </body>
-</html>'''
-    
+</html>"""
+
     def _get_document_template(self) -> str:
-        return '''<!DOCTYPE html>
+        return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -517,374 +524,407 @@ class StaticPageGenerator:
         <div class="footer">Generated by Friday AI Assistant</div>
     </div>
 </body>
-</html>'''
-    
+</html>"""
+
     def prepare_chart_config(self, data: Any, title: str) -> Dict[str, Any]:
         """Prepare Chart.js configuration from data."""
         if isinstance(data, dict):
-            chart_data = data.get('data', data)
-            chart_type = data.get('chart_type', 'line')
+            chart_data = data.get("data", data)
+            chart_type = data.get("chart_type", "line")
         else:
             chart_data = data
-            chart_type = 'line'
-        
+            chart_type = "line"
+
         if not isinstance(chart_data, list) or not chart_data:
             return {}
-        
+
         first_item = chart_data[0]
-        
+
         # Detect labels and values
-        if 'date' in first_item or 'time' in first_item or 'timestamp' in first_item:
+        if "date" in first_item or "time" in first_item or "timestamp" in first_item:
             # Time series
-            label_key = next(k for k in ['date', 'time', 'timestamp'] if k in first_item)
-            labels = [item.get(label_key, item.get('date', '')) for item in chart_data]
-            values = [item.get('value', item.get('price', item.get('count', 0))) for item in chart_data]
-        elif 'label' in first_item or 'name' in first_item:
+            label_key = next(
+                k for k in ["date", "time", "timestamp"] if k in first_item
+            )
+            labels = [item.get(label_key, item.get("date", "")) for item in chart_data]
+            values = [
+                item.get("value", item.get("price", item.get("count", 0)))
+                for item in chart_data
+            ]
+        elif "label" in first_item or "name" in first_item:
             # Categorical
-            label_key = 'label' if 'label' in first_item else 'name'
-            labels = [item.get(label_key, '') for item in chart_data]
-            values = [item.get('value', item.get('count', 0)) for item in chart_data]
+            label_key = "label" if "label" in first_item else "name"
+            labels = [item.get(label_key, "") for item in chart_data]
+            values = [item.get("value", item.get("count", 0)) for item in chart_data]
         else:
             # Fallback
             labels = [str(i) for i in range(len(chart_data))]
             values = list(chart_data)
-        
+
         return {
-            'type': chart_type,
-            'data': {
-                'labels': labels,
-                'datasets': [{
-                    'label': title,
-                    'data': values,
-                    'borderColor': '#667eea',
-                    'backgroundColor': 'rgba(102, 126, 234, 0.1)',
-                    'fill': True
-                }]
+            "type": chart_type,
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": title,
+                        "data": values,
+                        "borderColor": "#667eea",
+                        "backgroundColor": "rgba(102, 126, 234, 0.1)",
+                        "fill": True,
+                    }
+                ],
             },
-            'options': {
-                'responsive': True,
-                'maintainAspectRatio': False,
-                'plugins': {
-                    'legend': {'display': True}
-                }
-            }
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {"legend": {"display": True}},
+            },
         }
-    
+
     def _render_widgets(self, widgets: List[Dict]) -> str:
         """Render dashboard widgets as HTML."""
         html_parts = []
         for i, widget in enumerate(widgets):
-            widget_type = widget.get('type', 'table')
-            widget_title = widget.get('title', f'Widget {i+1}')
-            
-            if widget_type == 'chart':
-                html_parts.append(f'''
+            widget_type = widget.get("type", "table")
+            widget_title = widget.get("title", f"Widget {i + 1}")
+
+            if widget_type == "chart":
+                html_parts.append(f"""
             <div class="widget">
                 <h2>{widget_title}</h2>
                 <div class="chart-container">
                     <canvas id="chart-{i}"></canvas>
                 </div>
-            </div>''')
-            elif widget_type == 'table':
-                headers = widget.get('headers', [])
-                rows = widget.get('rows', [])
-                table_html = f'''
+            </div>""")
+            elif widget_type == "table":
+                headers = widget.get("headers", [])
+                rows = widget.get("rows", [])
+                table_html = f"""
             <div class="widget">
                 <h2>{widget_title}</h2>
                 <table>
                     <thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead>
                     <tbody>{"".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)}</tbody>
                 </table>
-            </div>'''
+            </div>"""
                 html_parts.append(table_html)
-            elif widget_type == 'list':
-                items = widget.get('items', [])
-                list_html = f'''
+            elif widget_type == "list":
+                items = widget.get("items", [])
+                list_html = f"""
             <div class="widget">
                 <h2>{widget_title}</h2>
                 <ul class="list">{"".join(f"<li>{item}</li>" for item in items)}</ul>
-            </div>'''
+            </div>"""
                 html_parts.append(list_html)
             else:
-                html_parts.append(f'''
+                html_parts.append(f"""
             <div class="widget">
                 <h2>{widget_title}</h2>
-                <div class="content">{json.dumps(widget.get('data', widget))}</div>
-            </div>''')
-        
-        return '\n'.join(html_parts)
-    
+                <div class="content">{json.dumps(widget.get("data", widget))}</div>
+            </div>""")
+
+        return "\n".join(html_parts)
+
     def _render_widget_scripts(self, widgets: List[Dict]) -> str:
         """Render Chart.js scripts for chart widgets."""
         scripts = []
         for i, widget in enumerate(widgets):
-            if widget.get('type') == 'chart':
-                chart_config = widget.get('chart_config', self.prepare_chart_config(widget.get('data', {}), widget.get('title', '')))
-                scripts.append(f'''
+            if widget.get("type") == "chart":
+                chart_config = widget.get(
+                    "chart_config",
+                    self.prepare_chart_config(
+                        widget.get("data", {}), widget.get("title", "")
+                    ),
+                )
+                scripts.append(f"""
         (function() {{
             const ctx = document.getElementById('chart-{i}').getContext('2d');
             const config = {json.dumps(chart_config)};
             new Chart(ctx, config);
-        }})();''')
-        return '\n'.join(scripts)
-    
-    def _render_document_content(self, data: Dict, image_handler: Optional[ImageHandler] = None) -> str:
+        }})();""")
+        return "\n".join(scripts)
+
+    def _render_document_content(
+        self, data: Dict, image_handler: Optional[ImageHandler] = None
+    ) -> str:
         """Render document content with sections."""
-        content = data.get('content', data.get('body', ''))
-        
+        content = data.get("content", data.get("body", ""))
+
         # If content is a string, treat as markdown-like text
         if isinstance(content, str):
             # Convert markdown-like syntax to HTML
             content = self._markdown_to_html(content)
             return content
-        
+
         # If content is a list of sections
         if isinstance(content, list):
             sections_html = []
             for section in content:
                 if isinstance(section, dict):
-                    section_title = section.get('title', '')
-                    section_body = section.get('content', section.get('body', ''))
-                    section_image = section.get('image')
-                    
-                    html = ''
+                    section_title = section.get("title", "")
+                    section_body = section.get("content", section.get("body", ""))
+                    section_image = section.get("image")
+
+                    html = ""
                     if section_title:
-                        html += f'<h2>{section_title}</h2>\n'
-                    
+                        html += f"<h2>{section_title}</h2>\n"
+
                     # Handle image if present
                     if section_image and image_handler:
-                        image_html, error = image_handler.process_image_field(section_image)
+                        image_html, error = image_handler.process_image_field(
+                            section_image
+                        )
                         if image_html:
-                            html += f'<figure class="section-image">{image_html}</figure>\n'
+                            html += (
+                                f'<figure class="section-image">{image_html}</figure>\n'
+                            )
                         if error:
-                            html += f'<!-- Image error: {error} -->\n'
-                    
+                            html += f"<!-- Image error: {error} -->\n"
+
                     if isinstance(section_body, str):
                         html += self._markdown_to_html(section_body)
                     elif isinstance(section_body, list):
                         for item in section_body:
-                            html += f'<p>{item}</p>\n'
+                            html += f"<p>{item}</p>\n"
                     else:
-                        html += f'<p>{section_body}</p>\n'
+                        html += f"<p>{section_body}</p>\n"
                     sections_html.append(html)
-            return '\n'.join(sections_html)
-        
+            return "\n".join(sections_html)
+
         return str(content)
-    
+
     def _markdown_to_html(self, text: str) -> str:
         """Convert markdown-like text to HTML."""
         import re
-        
+
         # Convert headers
-        text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
-        text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
-        text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
-        
+        text = re.sub(r"^### (.+)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
+        text = re.sub(r"^## (.+)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
+        text = re.sub(r"^# (.+)$", r"<h1>\1</h1>", text, flags=re.MULTILINE)
+
         # Convert bold and italic
-        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-        text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
-        
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+
         # Convert code blocks
-        text = re.sub(r'```(\w+)?\n(.+?)```', r'<pre><code class="\1">\2</code></pre>', text, flags=re.DOTALL)
-        text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
-        
+        text = re.sub(
+            r"```(\w+)?\n(.+?)```",
+            r'<pre><code class="\1">\2</code></pre>',
+            text,
+            flags=re.DOTALL,
+        )
+        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+
         # Convert links
-        text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', text)
-        
+        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
+
         # Convert unordered lists
-        lines = text.split('\n')
+        lines = text.split("\n")
         in_list = False
         result_lines = []
         for line in lines:
-            if line.strip().startswith('- '):
+            if line.strip().startswith("- "):
                 if not in_list:
-                    result_lines.append('<ul>')
+                    result_lines.append("<ul>")
                     in_list = True
-                result_lines.append(f'<li>{line.strip()[2:]}</li>')
+                result_lines.append(f"<li>{line.strip()[2:]}</li>")
             else:
                 if in_list:
-                    result_lines.append('</ul>')
+                    result_lines.append("</ul>")
                     in_list = False
                 result_lines.append(line)
         if in_list:
-            result_lines.append('</ul>')
-        text = '\n'.join(result_lines)
-        
+            result_lines.append("</ul>")
+        text = "\n".join(result_lines)
+
         # Convert paragraphs (double newline)
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
         processed = []
         for p in paragraphs:
             p = p.strip()
-            if p and not p.startswith('<'):
-                processed.append(f'<p>{p}</p>')
+            if p and not p.startswith("<"):
+                processed.append(f"<p>{p}</p>")
             else:
                 processed.append(p)
-        text = '\n'.join(processed)
-        
+        text = "\n".join(processed)
+
         return text
-    
+
     def _render_toc(self, toc_data: Any) -> str:
         """Render table of contents."""
         if isinstance(toc_data, list):
             items = []
             for item in toc_data:
                 if isinstance(item, dict):
-                    title = item.get('title', item.get('name', ''))
-                    anchor = item.get('anchor', title.lower().replace(' ', '-'))
+                    title = item.get("title", item.get("name", ""))
+                    anchor = item.get("anchor", title.lower().replace(" ", "-"))
                     items.append(f'<li><a href="#{anchor}">{title}</a></li>')
                 else:
-                    items.append(f'<li>{item}</li>')
-            return '<ul>' + '\n'.join(items) + '</ul>'
+                    items.append(f"<li>{item}</li>")
+            return "<ul>" + "\n".join(items) + "</ul>"
         return str(toc_data)
-    
-    def generate(self, data: Any, user_id: str, template: str = 'auto',
-                 title: str = 'Friday Page') -> Dict[str, Any]:
+
+    def generate(
+        self,
+        data: Any,
+        user_id: str,
+        template: str = "auto",
+        title: str = "Friday Page",
+    ) -> Dict[str, Any]:
         """
         Generate a static HTML page.
-        
+
         Args:
             data: Data to render
             user_id: User's phone number
             template: Template name ('auto', 'chart', 'table', 'list', 'dashboard')
             title: Page title
-            
+
         Returns:
             dict with success, path, url, expires
         """
         # Validate data size
         if not self.validate_data_size(data):
-            return {
-                'success': False,
-                'error': 'Data too large (max 1MB)'
-            }
-        
+            return {"success": False, "error": "Data too large (max 1MB)"}
+
         # Auto-detect template
-        if template == 'auto':
+        if template == "auto":
             template = self.detect_template(data)
-        
+
         # Generate hash
         page_hash = self.generate_hash(data, user_id)
-        
+
         # Create page directory
-        user_dir = self.web_portal_path / user_id.replace('+', '')
+        user_dir = self.web_portal_path / user_id.replace("+", "")
         page_dir = user_dir / page_hash
         page_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create image handler for this page
         image_handler = ImageHandler(str(page_dir))
-        
+
         # Prepare context
         context = {
-            'title': title,
-            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+            "title": title,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         }
-        
+
         # Render based on template
-        if template == 'chart':
-            context['chart_config'] = json.dumps(self.prepare_chart_config(data, title))
-            context['data'] = data
-        elif template == 'table':
-            if isinstance(data, dict) and 'headers' in data and 'rows' in data:
-                context['headers'] = ''.join(f'<th>{h}</th>' for h in data['headers'])
-                context['rows'] = ''.join(
-                    '<tr>' + ''.join(f'<td>{cell}</td>' for cell in row) + '</tr>'
-                    for row in data['rows']
+        if template == "chart":
+            context["chart_config"] = json.dumps(self.prepare_chart_config(data, title))
+            context["data"] = data
+        elif template == "table":
+            if isinstance(data, dict) and "headers" in data and "rows" in data:
+                context["headers"] = "".join(f"<th>{h}</th>" for h in data["headers"])
+                context["rows"] = "".join(
+                    "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
+                    for row in data["rows"]
                 )
             else:
                 # Auto-generate table from list of objects
                 if isinstance(data, list) and data and isinstance(data[0], dict):
                     headers = list(data[0].keys())
-                    context['headers'] = ''.join(f'<th>{h}</th>' for h in headers)
-                    context['rows'] = ''.join(
-                        '<tr>' + ''.join(f'<td>{row.get(h, "")}</td>' for h in headers) + '</tr>'
+                    context["headers"] = "".join(f"<th>{h}</th>" for h in headers)
+                    context["rows"] = "".join(
+                        "<tr>"
+                        + "".join(f"<td>{row.get(h, '')}</td>" for h in headers)
+                        + "</tr>"
                         for row in data
                     )
-        elif template == 'list':
-            items = data if isinstance(data, list) else data.get('items', [])
-            context['items'] = ''.join(
+        elif template == "list":
+            items = data if isinstance(data, list) else data.get("items", [])
+            context["items"] = "".join(
                 f'<div class="list-item"><div class="bullet"></div><div class="text">{item}</div></div>'
                 for item in items
             )
-        elif template == 'dashboard':
-            widgets = data.get('widgets', [])
-            context['widgets'] = self._render_widgets(widgets)
-            context['widget_scripts'] = self._render_widget_scripts(widgets)
-        elif template == 'document':
+        elif template == "dashboard":
+            widgets = data.get("widgets", [])
+            context["widgets"] = self._render_widgets(widgets)
+            context["widget_scripts"] = self._render_widget_scripts(widgets)
+        elif template == "document":
             # Document/blog template - pass image_handler for image processing
-            context['content'] = self._render_document_content(data, image_handler)
-            context['author'] = data.get('author', '')
-            context['date'] = data.get('date', '')
-            context['tags'] = data.get('tags', '')
-            context['subtitle'] = data.get('subtitle', '')
-            if 'toc' in data:
-                context['toc'] = self._render_toc(data['toc'])
+            context["content"] = self._render_document_content(data, image_handler)
+            context["author"] = data.get("author", "")
+            context["date"] = data.get("date", "")
+            context["tags"] = data.get("tags", "")
+            context["subtitle"] = data.get("subtitle", "")
+            if "toc" in data:
+                context["toc"] = self._render_toc(data["toc"])
         else:
             # Default - render as table or message
             if isinstance(data, list) and data and isinstance(data[0], dict):
                 headers = list(data[0].keys())
-                context['content'] = (
-                    '<table class="data-table"><thead><tr>' +
-                    ''.join(f'<th>{h}</th>' for h in headers) +
-                    '</tr></thead><tbody>' +
-                    ''.join('<tr>' + ''.join(f'<td>{row.get(h, "")}</td>' for h in headers) + '</tr>' for row in data) +
-                    '</tbody></table>'
+                context["content"] = (
+                    '<table class="data-table"><thead><tr>'
+                    + "".join(f"<th>{h}</th>" for h in headers)
+                    + "</tr></thead><tbody>"
+                    + "".join(
+                        "<tr>"
+                        + "".join(f"<td>{row.get(h, '')}</td>" for h in headers)
+                        + "</tr>"
+                        for row in data
+                    )
+                    + "</tbody></table>"
                 )
             else:
-                context['content'] = f'<div class="message">{json.dumps(data, indent=2)}</div>'
-        
+                context["content"] = (
+                    f'<div class="message">{json.dumps(data, indent=2)}</div>'
+                )
+
         # Render HTML
         html = self.render_template(template, context)
-        
+
         # Save files
-        index_path = page_dir / 'index.html'
+        index_path = page_dir / "index.html"
         index_path.write_text(html)
-        
+
         # Save data.json for reference
-        data_path = page_dir / 'data.json'
+        data_path = page_dir / "data.json"
         data_path.write_text(json.dumps(data, indent=2))
-        
+
         # Calculate expiry
         expires = datetime.now(timezone.utc).isoformat()
-        
+
         # Build URL
-        user_id_clean = user_id.replace('+', '')
+        user_id_clean = user_id.replace("+", "")
         if CLOUDFLARE_TUNNEL_URL:
-            url = f"{CLOUDFLARE_TUNNEL_URL}/{user_id_clean}/{page_hash}/"
+            url = f"{CLOUDFLARE_TUNNEL_URL}/portal/{user_id_clean}/{page_hash}/"
         else:
             url = f"/portal/{user_id}/{page_hash}/"
-        
+
         return {
-            'success': True,
-            'path': str(page_dir / 'index.html'),
-            'url': url,
-            'expires': expires
+            "success": True,
+            "path": str(page_dir / "index.html"),
+            "url": url,
+            "expires": expires,
         }
-    
+
     def list_pages(self, user_id: str) -> Dict[str, Any]:
         """List all pages for a user."""
-        user_dir = self.web_portal_path / user_id.replace('+', '')
-        
+        user_dir = self.web_portal_path / user_id.replace("+", "")
+
         if not user_dir.exists():
-            return {
-                'success': True,
-                'pages': []
-            }
-        
+            return {"success": True, "pages": []}
+
         pages = []
         for page_dir in user_dir.iterdir():
             if page_dir.is_dir():
-                index_file = page_dir / 'index.html'
+                index_file = page_dir / "index.html"
                 if index_file.exists():
                     stat = index_file.stat()
-                    pages.append({
-                        'id': page_dir.name,
-                        'path': str(index_file),
-                        'url': f"/portal/{user_id}/{page_dir.name}/",
-                        'created': datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
-                        'expires': datetime.fromtimestamp(stat.st_mtime + PAGE_EXPIRY_HOURS * 3600, tz=timezone.utc).isoformat()
-                    })
-        
-        return {
-            'success': True,
-            'pages': pages
-        }
+                    pages.append(
+                        {
+                            "id": page_dir.name,
+                            "path": str(index_file),
+                            "url": f"/portal/{user_id}/{page_dir.name}/",
+                            "created": datetime.fromtimestamp(
+                                stat.st_ctime, tz=timezone.utc
+                            ).isoformat(),
+                            "expires": datetime.fromtimestamp(
+                                stat.st_mtime + PAGE_EXPIRY_HOURS * 3600,
+                                tz=timezone.utc,
+                            ).isoformat(),
+                        }
+                    )
+
+        return {"success": True, "pages": pages}

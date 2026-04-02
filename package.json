@@ -29,7 +29,8 @@
     "test:cleanup": "tsx scripts/cleanup-test-pages.ts",
     "clear-messages": "tsx scripts/clear-messages.ts",
     "install-skills": "tsx scripts/install-skill-deps.ts",
-    "install-skills:dry": "tsx scripts/install-skill-deps.ts --dry-run"
+    "install-skills:dry": "tsx scripts/install-skill-deps.ts --dry-run",
+    "test:skill": "node scripts/test-skill.mjs"
   },
   "keywords": [
     "ai",
