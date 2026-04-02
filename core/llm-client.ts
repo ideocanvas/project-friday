@@ -35,6 +35,7 @@ export interface ChatCompletionOptions {
     maxTokens?: number;
     timeout?: number;
     tools?: ToolDefinition[];
+    tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
 }
 
 export interface ChatCompletionResponse {
@@ -67,7 +68,7 @@ export class LLMClient {
      * Create a chat completion
      */
     async chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResponse> {
-        const { messages, temperature = 0.7, maxTokens = 2048, timeout, tools } = options;
+        const { messages, temperature = 0.7, maxTokens = 2048, timeout, tools, tool_choice } = options;
         
         // Filter out messages with empty content that would cause API errors.
         // Keep tool messages (role=tool) and assistant messages with tool_calls even if content is empty.
@@ -110,7 +111,7 @@ export class LLMClient {
             // Add tools if provided
             if (tools && tools.length > 0) {
                 requestBody.tools = tools;
-                requestBody.tool_choice = 'auto';
+                requestBody.tool_choice = tool_choice || 'auto';
             }
 
             const response = await fetch(`${this.baseUrl}/chat/completions`, {

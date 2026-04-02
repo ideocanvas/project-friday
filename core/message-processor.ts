@@ -509,6 +509,9 @@ export function buildSystemPrompt(agent: Agent, userProfile: UserProfile | null)
     // Add strict anti-hallucination guidance
     systemPrompt += `\n\n## CRITICAL RULES\n\n1. NEVER make up facts, data, or information. If you don't know something, use a tool to find out, or say you don't know.\n2. NEVER invent weather data, news, prices, or any real-time information. Always use search or browser tools to get real data.\n3. If the user asks about current/recent information (weather, news, events), you MUST use a tool (search or browser) to get real data before responding.\n4. Do NOT guess or estimate real-time data. Always verify with tools first.`;
     
+    // Add WhatsApp conversational constraints
+    systemPrompt += `\n\n## Communication Style\n\nKeep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
+    
     return systemPrompt;
 }
 
@@ -755,11 +758,9 @@ async function agentLoop(
                     const result = results[0];
                     if (result) {
                         toolResult = {
-                            content: JSON.stringify({
-                                success: result.result.success,
-                                message: result.result.message,
-                                data: result.result.data,
-                            }),
+                            content: result.result.success ? 
+                                `Tool succeeded. Output: ${typeof result.result.data === 'string' ? result.result.data : JSON.stringify(result.result.data || result.result.message)}` : 
+                                `Error: ${result.result.message}`,
                         };
                         
                         // Check if skill returned an audio_path (for TTS/voice responses)
@@ -773,10 +774,7 @@ async function agentLoop(
                         }
                     } else {
                         toolResult = {
-                            content: JSON.stringify({
-                                success: false,
-                                message: `Tool execution failed: ${toolCall.name}`,
-                            }),
+                            content: `Error: Tool execution failed for ${toolCall.name}`,
                         };
                     }
                 }
@@ -816,8 +814,30 @@ async function agentLoop(
     
     // Max iterations reached
     console.warn(`[AgentLoop] Max iterations (${AGENT_MAX_ITERATIONS}) reached`);
+    
+    // Push a system warning message to force LLM to wrap up without calling more tools
+    messages.push({
+        role: 'system',
+        content: `I reached the maximum tool usage limit while processing this request. Regardless of current status, output an extremely short conversational apology summarizing what you got so far and ask the user to clarify or try again.`
+    });
+    
+    // One final call with tools disabled
+    const finalResponse = await llmClient.chatCompletion({
+        messages,
+        temperature,
+        maxTokens,
+        tool_choice: 'none',
+    });
+    
+    if (!finalResponse.success) {
+        return {
+            response: "I've been thinking about this for a while and hit an error. Could you try rephrasing your question?",
+            success: true,
+        };
+    }
+    
     return {
-        response: "I've been thinking about this for a while. Could you try rephrasing your question?",
+        response: finalResponse.content || "I've been thinking about this for a while. Could you try rephrasing your question?",
         success: true,
     };
 }
