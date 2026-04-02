@@ -173,7 +173,7 @@ class WhatsAppGateway {
                 const messageType = this.getMessageType(msg.message);
                 
                 try {
-                    let response: string;
+                    let response: { response: string; audio_path?: string };
                     
                     if (messageType === 'text') {
                         // Handle text message
@@ -208,7 +208,22 @@ class WhatsAppGateway {
                     
                     // Send response
                     await this.sock.sendPresenceUpdate('paused', jid);
-                    await this.sock.sendMessage(jid, { text: response });
+                    
+                    // If we have an audio response (from voice skill), send it as audio
+                    if (response.audio_path) {
+                        const audioBuffer = fs.readFileSync(response.audio_path);
+                        await this.sock.sendMessage(jid, { 
+                            audio: audioBuffer,
+                            mimetype: 'audio/mp3',
+                            ptt: true  // Push-to-talk style for voice messages
+                        });
+                        logger.info(`Sent audio response from ${response.audio_path}`);
+                    }
+                    
+                    // Always send text response if available
+                    if (response.response) {
+                        await this.sock.sendMessage(jid, { text: response.response });
+                    }
                 } catch (error) {
                     logger.error('Error processing message:', error);
                     await this.sock.sendMessage(jid, { text: 'Sorry, I encountered an error. Please try again.' });
@@ -230,7 +245,7 @@ class WhatsAppGateway {
      * acknowledgment. The background task will push its final result to the
      * pending_messages queue when done.
      */
-    async processMessage(jid: string, text: string): Promise<string> {
+    async processMessage(jid: string, text: string): Promise<{ response: string; audio_path?: string }> {
         const phone = this.jidToPhone(jid);
         
         // Save user message to memory
@@ -240,27 +255,32 @@ class WhatsAppGateway {
             // Process message with agent loop (may triage to background)
             const result = await processWithLLM(phone, text, { jid });
             
-            if (result.success && result.response) {
-                // Save assistant response to memory
-                this.appendMemory(jid, 'assistant', result.response);
-                
+            if (result.success) {
                 // If this was dispatched as a background task, log it
                 if (result.backgrounded && result.taskId) {
                     logger.info({ taskId: result.taskId }, 'Message dispatched as background task');
                 }
                 
-                return result.response;
+                // Save assistant response to memory (if we have text)
+                if (result.response) {
+                    this.appendMemory(jid, 'assistant', result.response);
+                }
+                
+                return {
+                    response: result.response || '',
+                    audio_path: result.audio_path,
+                };
             } else {
                 logger.error({ error: result.error }, 'Agent loop processing failed');
                 const fallbackResponse = "I'm sorry, I couldn't process your request. Please try again.";
                 this.appendMemory(jid, 'assistant', fallbackResponse);
-                return fallbackResponse;
+                return { response: fallbackResponse };
             }
         } catch (error) {
             logger.error('Error in message processing:', error);
             const errorResponse = "I'm sorry, something went wrong. Please try again later.";
             this.appendMemory(jid, 'assistant', errorResponse);
-            return errorResponse;
+            return { response: errorResponse };
         }
     }
 
@@ -293,12 +313,12 @@ class WhatsAppGateway {
      * the same processMessage flow as text.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async handleAudioMessage(jid: string, msg: any): Promise<string> {
+    async handleAudioMessage(jid: string, msg: any): Promise<{ response: string; audio_path?: string }> {
         try {
             // Download the audio file
             const audioPath = await this.downloadMedia(msg, 'audio');
             if (!audioPath) {
-                return "I couldn't download the voice message. Please try again.";
+                return { response: "I couldn't download the voice message. Please try again." };
             }
 
             logger.info(`Audio downloaded to: ${audioPath}`);
@@ -307,7 +327,7 @@ class WhatsAppGateway {
             const transcription = await this.transcribeAudio(audioPath);
             
             if (!transcription) {
-                return "I couldn't transcribe the voice message. Please try again.";
+                return { response: "I couldn't transcribe the voice message. Please try again." };
             }
 
             logger.info(`Transcribed text: ${transcription}`);
@@ -317,7 +337,7 @@ class WhatsAppGateway {
             return await this.processMessage(jid, `[Voice] ${transcription}`);
         } catch (error) {
             logger.error('Error handling audio message:', error);
-            return "Sorry, I encountered an error processing your voice message.";
+            return { response: "Sorry, I encountered an error processing your voice message." };
         }
     }
 
@@ -327,12 +347,12 @@ class WhatsAppGateway {
      * The LLM will use the vision skill via tool calling if needed.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async handleImageMessage(jid: string, msg: any, caption: string): Promise<string> {
+    async handleImageMessage(jid: string, msg: any, caption: string): Promise<{ response: string; audio_path?: string }> {
         try {
             // Download the image file
             const imagePath = await this.downloadMedia(msg, 'image');
             if (!imagePath) {
-                return "I couldn't download the image. Please try again.";
+                return { response: "I couldn't download the image. Please try again." };
             }
 
             logger.info(`Image downloaded to: ${imagePath}`);
@@ -348,17 +368,22 @@ class WhatsAppGateway {
             const phone = this.jidToPhone(jid);
             const result = await processWithLLM(phone, userMessage, { jid });
             
-            if (result.success && result.response) {
+            if (result.success) {
                 // Save the caption/image reference to memory after processing
                 this.appendMemory(jid, 'user', caption || '[Image]');
-                this.appendMemory(jid, 'assistant', result.response);
-                return result.response;
+                if (result.response) {
+                    this.appendMemory(jid, 'assistant', result.response);
+                }
+                return {
+                    response: result.response || '',
+                    audio_path: result.audio_path,
+                };
             }
             
-            return "I couldn't process your image. Please try again.";
+            return { response: "I couldn't process your image. Please try again." };
         } catch (error) {
             logger.error('Error handling image message:', error);
-            return "Sorry, I encountered an error processing your image.";
+            return { response: "Sorry, I encountered an error processing your image." };
         }
     }
 

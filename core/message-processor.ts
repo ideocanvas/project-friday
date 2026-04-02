@@ -81,6 +81,8 @@ interface ProcessResult {
     backgrounded?: boolean;
     /** The background task ID (set when backgrounded=true) */
     taskId?: string;
+    /** Path to audio file if skill generated audio (for TTS/voice responses) */
+    audio_path?: string;
 }
 
 /**
@@ -739,6 +741,8 @@ async function agentLoop(
             });
             
             // Execute each tool call
+            let lastAudioPath: string | undefined;
+            
             for (const toolCall of response.toolCalls) {
                 let toolResult: { content: string };
                 
@@ -757,6 +761,16 @@ async function agentLoop(
                                 data: result.result.data,
                             }),
                         };
+                        
+                        // Check if skill returned an audio_path (for TTS/voice responses)
+                        if (result.result.data && typeof result.result.data === 'object') {
+                            const data = result.result.data as Record<string, unknown>;
+                            console.log(`[AgentLoop] Skill result data:`, JSON.stringify(data).substring(0, 500));
+                            if (data.audio_path && typeof data.audio_path === 'string') {
+                                lastAudioPath = data.audio_path;
+                                console.log(`[AgentLoop] Found audio_path: ${lastAudioPath}`);
+                            }
+                        }
                     } else {
                         toolResult = {
                             content: JSON.stringify({
@@ -773,6 +787,17 @@ async function agentLoop(
                     tool_call_id: toolCall.id,
                     content: toolResult.content,
                 });
+            }
+            
+            // If we got an audio_path from a voice skill, return it immediately
+            // The LLM doesn't need to generate a text response - we'll send the audio
+            if (lastAudioPath) {
+                console.log(`[AgentLoop] Voice skill returned audio: ${lastAudioPath}`);
+                return {
+                    response: '', // Empty text response - gateway will send audio instead
+                    success: true,
+                    audio_path: lastAudioPath,
+                };
             }
             
             // Continue the loop — let the LLM decide what to do next
