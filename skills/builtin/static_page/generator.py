@@ -695,61 +695,56 @@ class StaticPageGenerator:
         return str(content)
 
     def _markdown_to_html(self, text: str) -> str:
-        """Convert markdown-like text to HTML."""
-        import re
+        """Convert markdown text to HTML using the markdown library."""
+        try:
+            import markdown
+            import re
 
-        # Convert headers
-        text = re.sub(r"^### (.+)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
-        text = re.sub(r"^## (.+)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
-        text = re.sub(r"^# (.+)$", r"<h1>\1</h1>", text, flags=re.MULTILINE)
+            text = re.sub(r"(\S)\n(- )", r"\1\n\n\2", text)
 
-        # Convert bold and italic
-        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-        text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+            return markdown.markdown(
+                text,
+                extensions=["tables", "fenced_code", "nl2br"],
+            )
+        except ImportError:
+            import re
 
-        # Convert code blocks
-        text = re.sub(
-            r"```(\w+)?\n(.+?)```",
-            r'<pre><code class="\1">\2</code></pre>',
-            text,
-            flags=re.DOTALL,
-        )
-        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
-
-        # Convert links
-        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
-
-        # Convert unordered lists
-        lines = text.split("\n")
-        in_list = False
-        result_lines = []
-        for line in lines:
-            if line.strip().startswith("- "):
-                if not in_list:
-                    result_lines.append("<ul>")
-                    in_list = True
-                result_lines.append(f"<li>{line.strip()[2:]}</li>")
-            else:
-                if in_list:
-                    result_lines.append("</ul>")
-                    in_list = False
-                result_lines.append(line)
-        if in_list:
-            result_lines.append("</ul>")
-        text = "\n".join(result_lines)
-
-        # Convert paragraphs (double newline)
-        paragraphs = text.split("\n\n")
-        processed = []
-        for p in paragraphs:
-            p = p.strip()
-            if p and not p.startswith("<"):
-                processed.append(f"<p>{p}</p>")
-            else:
-                processed.append(p)
-        text = "\n".join(processed)
-
-        return text
+            text = re.sub(r"^\\-{3,}$", r"---", text, flags=re.MULTILINE)
+            text = re.sub(r"^[-*]{3,}$", r"<hr>", text, flags=re.MULTILINE)
+            text = re.sub(r"^### (.+)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
+            text = re.sub(r"^## (.+)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
+            text = re.sub(r"^# (.+)$", r"<h1>\1</h1>", text, flags=re.MULTILINE)
+            text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+            text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+            text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+            text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
+            lines = text.split("\n")
+            in_list = False
+            result_lines = []
+            for line in lines:
+                if line.strip().startswith("- "):
+                    if not in_list:
+                        result_lines.append("<ul>")
+                        in_list = True
+                    result_lines.append(f"<li>{line.strip()[2:]}</li>")
+                else:
+                    if in_list:
+                        result_lines.append("</ul>")
+                        in_list = False
+                    result_lines.append(line)
+            if in_list:
+                result_lines.append("</ul>")
+            text = "\n".join(result_lines)
+            paragraphs = re.split(r"\n{2,}", text)
+            processed = []
+            for p in paragraphs:
+                p = p.strip()
+                if p and not p.startswith("<"):
+                    processed.append(f"<p>{p}</p>")
+                else:
+                    processed.append(p)
+            text = "\n".join(processed)
+            return text
 
     def _render_toc(self, toc_data: Any) -> str:
         """Render table of contents."""

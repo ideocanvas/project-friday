@@ -3,3 +3,6 @@
 
 # Jinja2 templating engine (optional - falls back to basic templating)
 jinja2>=3.1.0
+
+# Markdown to HTML conversion
+markdown>=3.4
