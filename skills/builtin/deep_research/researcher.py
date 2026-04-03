@@ -17,8 +17,10 @@ import time
 import asyncio
 import subprocess
 import sys
+import re
+import unicodedata
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add current directory to path for local imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,10 +44,137 @@ MAX_ITERATIONS = int(os.getenv("DEEP_RESEARCH_MAX_ITERATIONS", "10"))
 TEMP_DIR = os.getenv("DEEP_RESEARCH_TEMP_DIR", "./temp/deep_research")
 CLOUDFLARE_TUNNEL_URL = os.getenv("CLOUDFLARE_TUNNEL_URL", "http://localhost:3000")
 MAX_TEXT_LENGTH_FOR_PAGE = int(os.getenv("DEEP_RESEARCH_TEXT_THRESHOLD", "1000"))
+MEMORY_MAX_AGE_HOURS = float(os.getenv("DEEP_RESEARCH_MEMORY_MAX_AGE_HOURS", "1"))
+REALTIME_MEMORY_MAX_AGE_HOURS = float(
+    os.getenv("DEEP_RESEARCH_REALTIME_MEMORY_MAX_AGE_HOURS", "0.25")
+)
+BUILTIN_MIN_SCORE = float(os.getenv("DEEP_RESEARCH_BUILTIN_MIN_SCORE", "0.45"))
+USER_MEMORY_MIN_SUMMARY_LEN = int(
+    os.getenv("DEEP_RESEARCH_USER_MEMORY_MIN_SUMMARY_LEN", "120")
+)
+USER_MEMORY_MIN_FACTS = int(os.getenv("DEEP_RESEARCH_USER_MEMORY_MIN_FACTS", "2"))
 MEMORY_DIR = Path(__file__).parent / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 BUILTIN_MEMORY_DIR = Path(__file__).parent / "builtin_memory"
 BUILTIN_MEMORY_DIR.mkdir(exist_ok=True)
+
+LANGUAGE_HINTS = {
+    "en": {
+        "realtime": [
+            "today",
+            "current",
+            "now",
+            "latest",
+            "news",
+            "weather",
+            "stock",
+            "price",
+            "quote",
+            "real-time",
+            "live",
+            "breaking",
+        ],
+        "news": ["news", "headline", "breaking", "update"],
+    },
+    "zh": {
+        "realtime": [
+            "今天",
+            "目前",
+            "现在",
+            "最新",
+            "新闻",
+            "天氣",
+            "天气",
+            "股價",
+            "股价",
+            "價格",
+            "价格",
+            "實時",
+            "实时",
+            "直播",
+            "快訊",
+            "快讯",
+        ],
+        "news": ["新闻", "快讯", "头条", "最新"],
+    },
+    "ja": {
+        "realtime": [
+            "今日",
+            "現在",
+            "今",
+            "最新",
+            "ニュース",
+            "天気",
+            "株価",
+            "価格",
+            "リアルタイム",
+            "ライブ",
+            "速報",
+        ],
+        "news": ["ニュース", "速報", "見出し", "最新情報"],
+    },
+    "ko": {
+        "realtime": [
+            "오늘",
+            "현재",
+            "지금",
+            "최신",
+            "뉴스",
+            "날씨",
+            "주가",
+            "가격",
+            "실시간",
+            "라이브",
+            "속보",
+        ],
+        "news": ["뉴스", "속보", "헤드라인", "업데이트"],
+    },
+    "es": {
+        "realtime": [
+            "hoy",
+            "actual",
+            "ahora",
+            "último",
+            "noticias",
+            "clima",
+            "bolsa",
+            "precio",
+            "en vivo",
+            "tiempo real",
+        ],
+        "news": ["noticias", "última hora", "titular", "actualización"],
+    },
+    "fr": {
+        "realtime": [
+            "aujourd'hui",
+            "actuel",
+            "maintenant",
+            "dernier",
+            "actualités",
+            "météo",
+            "bourse",
+            "prix",
+            "en direct",
+            "temps réel",
+        ],
+        "news": ["actualités", "dernière minute", "titre", "mise à jour"],
+    },
+    "de": {
+        "realtime": [
+            "heute",
+            "aktuell",
+            "jetzt",
+            "neueste",
+            "nachrichten",
+            "wetter",
+            "aktie",
+            "preis",
+            "live",
+            "echtzeit",
+        ],
+        "news": ["nachrichten", "schlagzeile", "eilmeldung", "update"],
+    },
+}
 
 
 class ResearchResult:
@@ -120,25 +249,94 @@ class DeepResearcher:
         self.errors: List[str] = []
         self.session_id = f"{int(time.time())}_{hash(query) % 10000}"
         self.memory = None
+        self.query_language = self._detect_query_language(query)
+
+    def _normalize_text(self, text: str) -> str:
+        return unicodedata.normalize("NFKC", (text or "").strip().lower())
+
+    def _detect_query_language(self, query: str) -> str:
+        q = self._normalize_text(query)
+        if re.search(r"[\u4e00-\u9fff]", q):
+            return "zh"
+        if re.search(r"[\u3040-\u30ff]", q):
+            return "ja"
+        if re.search(r"[\uac00-\ud7af]", q):
+            return "ko"
+        for lang in ("es", "fr", "de"):
+            for k in LANGUAGE_HINTS[lang]["realtime"] + LANGUAGE_HINTS[lang]["news"]:
+                if k in q:
+                    return lang
+        return "en"
+
+    def _all_keywords(self, kind: str) -> List[str]:
+        return LANGUAGE_HINTS.get(self.query_language, {}).get(kind, []) + LANGUAGE_HINTS[
+            "en"
+        ].get(kind, [])
+
+    def _is_news_query(self, query: str) -> bool:
+        q = self._normalize_text(query)
+        return any(k in q for k in self._all_keywords("news"))
 
     def _is_realtime_query(self, query: str) -> bool:
         """Check if query requires real-time data."""
-        realtime_keywords = [
-            "today",
-            "current",
-            "now",
-            "latest",
-            "news",
-            "weather",
-            "stock price",
-            "price of",
-            "quote",
-            "real-time",
-            "live",
-            "breaking",
-        ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in realtime_keywords)
+        q = self._normalize_text(query)
+        return any(k in q for k in self._all_keywords("realtime"))
+
+    def _parse_ts(self, ts: str) -> Optional[datetime]:
+        if not ts:
+            return None
+        try:
+            if ts.endswith("Z"):
+                ts = ts[:-1] + "+00:00"
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    def _memory_age_hours(self, mem: Dict[str, Any]) -> float:
+        dt = self._parse_ts(mem.get("timestamp", ""))
+        if not dt:
+            return 1e9
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+
+    def _memory_is_reusable(self, mem: Dict[str, Any]) -> bool:
+        ttl = (
+            REALTIME_MEMORY_MAX_AGE_HOURS
+            if self._is_realtime_query(self.query)
+            else MEMORY_MAX_AGE_HOURS
+        )
+        return self._memory_age_hours(mem) <= ttl
+
+    def _keyword_score(self, query: str, keywords: List[str]) -> float:
+        q = set(
+            re.findall(
+                r"[a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+",
+                self._normalize_text(query),
+            )
+        )
+        k = set(
+            re.findall(
+                r"[a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+",
+                self._normalize_text(" ".join(keywords or [])),
+            )
+        )
+        if not q or not k:
+            return 0.0
+        return len(q & k) / max(len(q | k), 1)
+
+    def _is_low_quality_memory(self, mem: Dict[str, Any]) -> bool:
+        findings = mem.get("findings", [])
+        summary = (mem.get("summary") or "").strip()
+        fact_count = sum(
+            len(f.get("key_facts", [])) for f in findings if isinstance(f, dict)
+        )
+        return (
+            len(summary) < USER_MEMORY_MIN_SUMMARY_LEN
+            or len(findings) == 0
+            or fact_count < USER_MEMORY_MIN_FACTS
+        )
 
     def _create_temp_dir(self):
         """Create temp directory for this research session."""
@@ -158,10 +356,12 @@ class DeepResearcher:
                 print(f"[Researcher] Failed to cleanup temp dir: {e}")
 
     def _sanitize_query(self, query: str) -> str:
-        import re
-
-        sanitized = re.sub(r"[^a-zA-Z0-9\s]", "", query.lower()).replace(" ", "-")
-        return sanitized[:100]
+        base = self._normalize_text(query)
+        base = re.sub(r"[^\w\s\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af-]", "", base)
+        base = re.sub(r"\s+", "-", base).strip("-")
+        if not base:
+            base = f"q-{abs(hash(query)) % 10000000}"
+        return base[:100]
 
     def _load_memory(self):
         mem_file = MEMORY_DIR / f"{self._sanitize_query(self.query)}.json"
@@ -170,24 +370,49 @@ class DeepResearcher:
                 with open(mem_file, "r", encoding="utf-8") as f:
                     self.memory = json.load(f)
                 print(f"[Researcher] Loaded memory for query: {self.query}")
+                return self.memory
             except Exception as e:
                 print(f"[Researcher] Failed to load memory: {e}")
                 self.memory = None
+        return None
 
     def _load_builtin_memory(self):
-        """Load built-in memory for common queries."""
-        import re
-
+        """Load best built-in memory by score."""
+        best = None
+        best_score = 0.0
         for mem_file in BUILTIN_MEMORY_DIR.glob("*.json"):
+            if mem_file.name == "_config.json":
+                continue
             try:
                 with open(mem_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                pattern = data.get("query_pattern", "")
-                if re.search(pattern, self.query, re.IGNORECASE):
-                    print(f"[Researcher] Loaded builtin memory: {mem_file.name}")
-                    return data
+
+                score = 0.0
+                i18n_patterns = data.get("query_pattern_i18n", {})
+                pattern = i18n_patterns.get(self.query_language) or data.get(
+                    "query_pattern", ""
+                )
+                if pattern:
+                    try:
+                        if re.search(pattern, self.query, re.IGNORECASE):
+                            score += 0.7
+                    except re.error:
+                        pass
+
+                i18n_keywords = data.get("keywords_i18n", {})
+                keywords = i18n_keywords.get(self.query_language, data.get("keywords", []))
+                score += 0.25 * self._keyword_score(self.query, keywords)
+                score += float(data.get("priority", 0.0))
+
+                if score > best_score:
+                    best = data
+                    best_score = score
             except Exception as e:
                 print(f"[Researcher] Failed to load builtin memory {mem_file}: {e}")
+
+        if best and best_score >= BUILTIN_MIN_SCORE:
+            print(f"[Researcher] Loaded builtin memory (score={best_score:.2f})")
+            return best
         return None
 
     def _save_memory(self, result: ResearchResult):
@@ -201,6 +426,11 @@ class DeepResearcher:
             "mode": self.mode,
             "sources_visited": len(self.findings),
         }
+
+        if self._is_low_quality_memory(data):
+            print("[Researcher] Skip saving low-quality memory")
+            return
+
         mem_file = MEMORY_DIR / f"{self._sanitize_query(self.query)}.json"
         try:
             with open(mem_file, "w", encoding="utf-8") as f:
@@ -235,36 +465,29 @@ class DeepResearcher:
 
         try:
             self._create_temp_dir()
-            # Load builtin memory first
-            self.memory = self._load_builtin_memory()
-            # If no builtin or not real-time query, try user memory
-            if not self.memory or not self._is_realtime_query(self.query):
-                user_memory = self._load_memory()
-                if user_memory and not self._is_realtime_query(self.query):
-                    mem_time = datetime.fromisoformat(user_memory["timestamp"][:-1])
-                    now = datetime.utcnow()
-                    age_hours = (now - mem_time).total_seconds() / 3600
-                    if age_hours < 1:
-                        self.memory = user_memory
+            builtin_mem = self._load_builtin_memory()
+            user_mem = self._load_memory()
 
-            # Check if we can use memory
-            if self.memory:
-                mem_time = datetime.fromisoformat(self.memory["timestamp"][:-1])
-                now = datetime.utcnow()
-                age_hours = (now - mem_time).total_seconds() / 3600
-                is_builtin = "preferred_sources" in self.memory
-                # Only reuse user memory if recent and not real-time
-                if (
-                    not is_builtin
-                    and age_hours < 1
-                    and not self._is_realtime_query(self.query)
-                ):
-                    print(f"[Researcher] Using user memory ({age_hours:.1f}h old)")
-                    result.findings = self.memory["findings"]
-                    result.summary = self.memory["summary"]
-                    result.sources_visited = self.memory["sources_visited"]
-                    result.duration_ms = 0
-                    return result
+            # Reuse user memory only when fresh and high quality for non-realtime queries.
+            if (
+                user_mem
+                and not self._is_realtime_query(self.query)
+                and self._memory_is_reusable(user_mem)
+                and not self._is_low_quality_memory(user_mem)
+            ):
+                print(
+                    f"[Researcher] Using user memory ({self._memory_age_hours(user_mem):.2f}h old)"
+                )
+                result.findings = user_mem.get("findings", [])
+                result.summary = user_mem.get("summary", "")
+                result.sources_visited = user_mem.get(
+                    "sources_visited", len(result.findings)
+                )
+                result.duration_ms = 0
+                return result
+
+            # Built-in memory acts as prior, not direct answer cache.
+            self.memory = builtin_mem
 
             # Step 1: Plan research
             print(f"[Researcher] Planning research for: {self.query}")
@@ -627,10 +850,7 @@ Return ONLY the JSON array."""
 
     def _plan_research(self) -> Optional[Dict[str, Any]]:
         """Use LLM to plan research strategy."""
-        # Override search_type for news queries
-        mode = self.mode
-        if "news" in self.query.lower():
-            mode = "news"  # Special mode to trigger news search
+        mode = "news" if self._is_news_query(self.query) else self.mode
         prompt = plan_research_prompt(self.query, mode)
         result = call_llm_json(
             prompt,
@@ -638,7 +858,7 @@ Return ONLY the JSON array."""
             temperature=0.3,
             max_tokens=500,
         )
-        if result and "news" in self.query.lower():
+        if result and self._is_news_query(self.query):
             result["search_type"] = "news"
             if not result.get("date_range"):
                 result["date_range"] = "day"
@@ -693,7 +913,10 @@ Return ONLY the JSON array."""
         prompt = synthesize_prompt(self.query, self.findings, self.mode)
         return call_llm(
             prompt,
-            system_msg="You are a research synthesis assistant. Write clear, informative answers.",
+            system_msg=(
+                "You are a research synthesis assistant. "
+                "Write clear, informative answers in the same language as the user's query."
+            ),
             temperature=0.5,
             max_tokens=2048,
         )

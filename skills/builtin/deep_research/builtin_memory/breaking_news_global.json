@@ -1,0 +1,47 @@
+{
+  "name": "breaking_news_global",
+  "query_pattern": "(breaking|latest|top|headline).*(news)|news.*(today|now|latest)",
+  "query_pattern_i18n": {
+    "zh": "(快訊|快讯|最新|頭條|头条).*(新聞|新闻)|新聞.*(今天|最新)",
+    "ja": "(速報|最新|見出し).*(ニュース)|ニュース.*(今日|最新)",
+    "ko": "(속보|최신|헤드라인).*(뉴스)|뉴스.*(오늘|최신)",
+    "es": "(última hora|últimas|titular).*(noticias)|noticias.*(hoy|actual)",
+    "fr": "(dernière minute|dernières|titre).*(actualités)|actualités.*(aujourd'hui|actuel)",
+    "de": "(eilmeldung|neueste|schlagzeile).*(nachrichten)|nachrichten.*(heute|aktuell)"
+  },
+  "keywords": [
+    "breaking news",
+    "latest headlines",
+    "verified source",
+    "timeline",
+    "official statement"
+  ],
+  "priority": 0.12,
+  "type": "news",
+  "focus_areas": [
+    "what happened",
+    "when and where",
+    "who is affected",
+    "official confirmations",
+    "open uncertainties"
+  ],
+  "preferred_sources": [
+    {
+      "url": "https://www.reuters.com/world/",
+      "title": "Reuters World",
+      "description": "Global wire coverage"
+    },
+    {
+      "url": "https://apnews.com/",
+      "title": "Associated Press",
+      "description": "Global breaking coverage"
+    },
+    {
+      "url": "https://www.bbc.com/news",
+      "title": "BBC News",
+      "description": "Global headline coverage"
+    }
+  ],
+  "search_fallback": true,
+  "timestamp": "2026-04-03T00:30:00Z"
+}

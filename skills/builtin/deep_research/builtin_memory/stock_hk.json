@@ -1,21 +1,49 @@
 {
-  "query_pattern": ".*\\.HK.*price|price.*\\.HK|stock.*\\.HK|01810\\.HK",
+  "name": "hong_kong_stock_quote",
+  "query_pattern": "([0-9]{4,5}\\.hk|\\.hk\\b).*(price|quote|stock)|(price|quote|stock).*(\\.hk|[0-9]{4,5}\\.hk)",
+  "query_pattern_i18n": {
+    "zh": "([0-9]{4,5}\\.hk|港股).*(股價|股价|報價|报价)|(股價|股价|報價|报价).*(港股|[0-9]{4,5}\\.hk)",
+    "ja": "([0-9]{4,5}\\.hk|香港株).*(株価|価格)|(株価|価格).*(香港株|[0-9]{4,5}\\.hk)",
+    "ko": "([0-9]{4,5}\\.hk|홍콩주).*(주가|가격)|(주가|가격).*(홍콩주|[0-9]{4,5}\\.hk)"
+  },
+  "keywords": [
+    "stock quote",
+    "hkex",
+    "price",
+    "ticker",
+    "volume",
+    "market cap",
+    "currency",
+    "timestamp"
+  ],
+  "keywords_i18n": {
+    "zh": ["港股", "股價", "股价", "成交量", "市值", "貨幣", "货币", "時間"],
+    "ja": ["香港株", "株価", "出来高", "時価総額", "通貨", "時刻"],
+    "ko": ["홍콩주", "주가", "거래량", "시가총액", "통화", "시간"]
+  },
+  "priority": 0.1,
   "type": "stock",
+  "focus_areas": [
+    "latest price and change",
+    "exchange and quote currency",
+    "quote timestamp",
+    "day range and volume"
+  ],
   "preferred_sources": [
     {
-      "url": "https://www.hkex.com.hk/Market-Data/Securities-Prices/Equities/Equities-Quote?sym=1810&sc_lang=en",
-      "title": "HKEX Xiaomi Stock Quote",
-      "description": "Official Hong Kong Stock Exchange quote page"
+      "url": "https://www.hkex.com.hk/Market-Data/Securities-Prices/Equities",
+      "title": "HKEX Equities Market Data",
+      "description": "Official Hong Kong Exchange market data"
     },
     {
-      "url": "https://finance.yahoo.com/quote/1810.HK/",
-      "title": "Yahoo Finance Xiaomi",
-      "description": "Comprehensive stock data and analysis"
+      "url": "https://finance.yahoo.com/markets/stocks/",
+      "title": "Yahoo Finance Stocks",
+      "description": "Broad market and ticker quote pages"
     },
     {
-      "url": "https://www.investing.com/equities/xiaomi-corp",
-      "title": "Investing.com Xiaomi",
-      "description": "Real-time stock quotes and charts"
+      "url": "https://www.reuters.com/markets/",
+      "title": "Reuters Markets",
+      "description": "Market-moving news and quotes"
     }
   ],
   "search_fallback": true,

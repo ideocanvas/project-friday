@@ -1,0 +1,37 @@
+{
+  "query": "What is the capital of France?",
+  "findings": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Paris",
+      "title": "Paris - Wikipedia",
+      "relevant_info": "Paris is the capital and largest city of France.",
+      "key_facts": [
+        "Paris is explicitly identified as the capital city of France",
+        "Paris is the largest city in France with an estimated population of 2.04 million (city) and 13.2 million (metropolitan area) as of January 2026",
+        "The president of France and both houses of the French Parliament sit in Paris",
+        "Paris is located on the river Seine in the centre of the Île-de-France region"
+      ],
+      "source_quality": "high",
+      "has_answer": true,
+      "timestamp": "2026-04-02T10:11:41.681980Z"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/France",
+      "title": "France - Wikipedia",
+      "relevant_info": "The capital of France is Paris.",
+      "key_facts": [
+        "Paris is officially designated as the capital of France",
+        "Paris is also the largest city in France",
+        "Paris serves as the main cultural and economic centre of France",
+        "Geographic coordinates of Paris: 48°51′N 2°21′E"
+      ],
+      "source_quality": "high",
+      "has_answer": true,
+      "timestamp": "2026-04-02T10:12:10.656496Z"
+    }
+  ],
+  "summary": "**Paris is the capital of France.** It serves as the nation's political center and is also the country's largest city.\n\nBoth sources confirm Paris's status as the official capital. According to Wikipedia, Paris is not only the political seat of the government—housing the President of France and both houses of the French Parliament—but also the main cultural and economic center of the country. The city has an estimated population of 2.04 million within the city limits and 13.2 million in the metropolitan area as of January 2026. Geographically, Paris is located on the river Seine in the center of the Île-de-France region.\n\nThere are no contradictions between the sources. The information is supported by high-quality sources with a high degree of confidence.",
+  "timestamp": "2026-04-02T10:12:19.622584Z",
+  "mode": "quick",
+  "sources_visited": 2
+}

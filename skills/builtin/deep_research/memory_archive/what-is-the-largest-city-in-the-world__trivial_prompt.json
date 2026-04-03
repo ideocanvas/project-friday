@@ -1,0 +1,41 @@
+{
+  "query": "What is the largest city in the world?",
+  "findings": [
+    {
+      "url": "https://en.wikipedia.org/wiki/List_of_largest_cities",
+      "title": "List of largest cities - Wikipedia",
+      "relevant_info": "Chongqing, China is the largest city proper in the world by population, with approximately 30 million residents. However, this figure is based on administrative boundaries covering 82,403 km² (roughly the size of Austria), and over 70% of its population consists of agricultural workers living in rural areas. Tokyo is noted as the world's third-largest city by metropolitan population.",
+      "key_facts": [
+        "Chongqing, China has the largest population of any city proper in the world",
+        "Chongqing's population is approximately 30 million",
+        "Chongqing's administrative area is 82,403 km², roughly the size of Austria",
+        "Over 70% of Chongqing's residents live in rural areas and work in agriculture",
+        "Tokyo is the world's third-largest city by metropolitan population",
+        "The United Nations uses three definitions for what constitutes a city: city proper, metropolitan area, and urban area",
+        "City proper population figures may differ greatly from urban area population figures due to administrative boundary variations"
+      ],
+      "source_quality": "high",
+      "has_answer": true,
+      "timestamp": "2026-04-02T10:27:26.966778Z"
+    },
+    {
+      "url": "https://worldpopulationreview.com/cities",
+      "title": "Largest Cities by Population 2026",
+      "relevant_info": "Tokyo is the largest city in the world when including the entire metropolitan area, with a total population of 37 million residents.",
+      "key_facts": [
+        "Tokyo metro area has 37M residents, making it the world's largest city by metropolitan population",
+        "Delhi has 35.5M residents (second largest mentioned)",
+        "Shanghai has 31M residents",
+        "The page distinguishes between city proper and metropolitan area population, noting Tokyo is largest 'if the entire Tokyo metro area is included'",
+        "Other major cities: Beijing (23M), Mumbai (22.5M), Osaka (18.9M), Cairo (23.5M), Sao Paulo (23.2M), Mexico City (23M)"
+      ],
+      "source_quality": "medium",
+      "has_answer": true,
+      "timestamp": "2026-04-02T10:27:37.528013Z"
+    }
+  ],
+  "summary": "**Answer:**\n\nThere is no single answer to this question because it depends on how a \"city\" is defined. **Chongqing, China** is the largest city in the world by \"city proper\" population, with approximately 30 million residents. However, **Tokyo, Japan** is the largest city by metropolitan area population, with 37 million residents.\n\n**Detailed Supporting Information:**\n\nThe United Nations recognizes three different definitions for measuring city populations—city proper, metropolitan area, and urban area—which leads to different cities holding the top ranking depending on the methodology used.\n\n**Chongqing, China (Largest by City Proper):**\n- Population: Approximately 30 million residents\n- Holds the distinction of having the largest population of any city proper in the world\n- Important context: The city's administrative boundaries cover 82,403 km² (roughly the size of Austria), and over 70% of its counted population consists of agricultural workers living in rural areas rather than in the urban core\n\n**Tokyo, Japan (Largest by Metropolitan Area):**\n- Population: 37 million residents in the metropolitan area\n- Ranked as the world's largest city when measured by metropolitan population\n- Delhi ranks second with 35.5 million residents, followed by other major metropolitan areas like Shanghai (31 million)\n\n**Key Distinction:**\nThe variation in rankings stems from administrative boundary differences. City proper figures can differ dramatically from urban area figures because some cities, like Chongqing, have administrative boundaries that encompass vast rural territories, while metropolitan area measurements capture the functional urban region including surrounding suburbs and satellite cities.\n\n**Source Quality Note:**\nThe primary information is drawn from Wikipedia (high quality) which provides detailed context about measurement methodologies, supplemented by World Population Review (medium quality) which provides current metropolitan population rankings. Both sources agree on the fundamental distinction between measurement types, though they present the information with different levels of methodological detail.",
+  "timestamp": "2026-04-02T10:27:57.860350Z",
+  "mode": "quick",
+  "sources_visited": 2
+}

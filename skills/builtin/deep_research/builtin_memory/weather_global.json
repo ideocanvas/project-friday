@@ -1,0 +1,48 @@
+{
+  "name": "global_weather",
+  "query_pattern": "(weather|forecast|temperature|humidity|rain|storm)",
+  "query_pattern_i18n": {
+    "zh": "(天氣|天气|氣象|气象|溫度|温度|降雨|風暴)",
+    "ja": "(天気|気象|気温|降雨|嵐)",
+    "ko": "(날씨|기상|기온|강수|폭풍)",
+    "es": "(clima|tiempo|temperatura|lluvia|tormenta)",
+    "fr": "(météo|temps|température|pluie|tempête)",
+    "de": "(wetter|temperatur|regen|sturm|vorhersage)"
+  },
+  "keywords": [
+    "weather",
+    "forecast",
+    "temperature",
+    "humidity",
+    "wind",
+    "alerts",
+    "timestamp"
+  ],
+  "priority": 0.05,
+  "type": "weather",
+  "focus_areas": [
+    "current conditions",
+    "near-term forecast",
+    "warnings and alerts",
+    "observation timestamp"
+  ],
+  "preferred_sources": [
+    {
+      "url": "https://worldweather.wmo.int/",
+      "title": "WMO World Weather",
+      "description": "Global weather by official meteorological agencies"
+    },
+    {
+      "url": "https://www.weather.gov/",
+      "title": "US National Weather Service",
+      "description": "Official weather bulletins and alerts"
+    },
+    {
+      "url": "https://www.metoffice.gov.uk/weather",
+      "title": "UK Met Office",
+      "description": "Official forecasts and warnings"
+    }
+  ],
+  "search_fallback": true,
+  "timestamp": "2026-04-03T00:30:00Z"
+}

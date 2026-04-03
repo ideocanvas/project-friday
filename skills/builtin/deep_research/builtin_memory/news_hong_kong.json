@@ -1,19 +1,50 @@
 {
-  "query_pattern": "news.*hong.kong|hong.kong.*news|top news.*hong kong",
+  "name": "hong_kong_news",
+  "query_pattern": "(news|headline|breaking).*(hong\\s*kong)|(hong\\s*kong).*(news|headline|breaking)",
+  "query_pattern_i18n": {
+    "zh": "(香港).*(新聞|新闻|頭條|头条|快訊|快讯)|(新聞|新闻|頭條|头条|快訊|快讯).*(香港)",
+    "ja": "(香港).*(ニュース|見出し|速報)|(ニュース|見出し|速報).*(香港)",
+    "ko": "(홍콩).*(뉴스|헤드라인|속보)|(뉴스|헤드라인|속보).*(홍콩)"
+  },
+  "keywords": [
+    "hong kong news",
+    "headline",
+    "breaking",
+    "government",
+    "economy",
+    "society",
+    "policy"
+  ],
+  "keywords_i18n": {
+    "zh": ["香港 新聞", "香港 新闻", "頭條", "头条", "快訊", "快讯", "政府", "經濟", "经济"],
+    "ja": ["香港 ニュース", "見出し", "速報", "政府", "経済", "社会"],
+    "ko": ["홍콩 뉴스", "헤드라인", "속보", "정부", "경제", "사회"]
+  },
+  "priority": 0.12,
   "type": "news",
   "preferred_sources": [
     {
       "url": "https://news.google.com/rss/search?q=%E9%A6%99%E6%B8%AF%20news&hl=zh-HK&gl=HK&ceid=HK:zh-Hant",
-      "title": "Google News - Hong Kong Geo RSS",
-      "description": "Google News geographic RSS feed for Hong Kong region"
+      "title": "Google News Hong Kong",
+      "description": "Hong Kong-related multilingual news feed"
+    },
+    {
+      "url": "https://www.reuters.com/world/asia-pacific/",
+      "title": "Reuters Asia Pacific",
+      "description": "Regional wire coverage with strong editorial standards"
     },
     {
       "url": "https://hongkongfp.com/feed/",
       "title": "Hong Kong Free Press",
-      "description": "Independent English news covering Hong Kong politics and society"
+      "description": "Local Hong Kong coverage"
     }
   ],
-  "focus_areas": ["Hong Kong news", "Hong Kong politics", "Hong Kong economy", "Hong Kong government", "Hong Kong society", "Chinese news related to Hong Kong", "Asia news affecting Hong Kong"],
+  "focus_areas": [
+    "latest verified developments",
+    "when and where the event happened",
+    "stakeholders and impact",
+    "official statements and uncertainty"
+  ],
   "search_fallback": true,
   "timestamp": "2026-04-03T00:23:58Z"
 }

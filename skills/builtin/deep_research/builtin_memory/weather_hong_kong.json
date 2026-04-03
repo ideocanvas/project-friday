@@ -1,21 +1,47 @@
 {
-  "query_pattern": "weather.*hong.kong|hong.kong.*weather|current weather.*hong kong",
+  "name": "hong_kong_weather",
+  "query_pattern": "(weather|forecast).*(hong\\s*kong|hk)|(hong\\s*kong|hk).*(weather|forecast)",
+  "query_pattern_i18n": {
+    "zh": "(香港).*(天氣|天气|氣象|气象)|(天氣|天气|氣象|气象).*(香港)",
+    "ja": "(香港).*(天気|気象)|(天気|気象).*(香港)",
+    "ko": "(홍콩).*(날씨|기상)|(날씨|기상).*(홍콩)"
+  },
+  "keywords": [
+    "hong kong weather",
+    "forecast",
+    "temperature",
+    "humidity",
+    "rain",
+    "warnings"
+  ],
+  "keywords_i18n": {
+    "zh": ["香港 天氣", "香港 天气", "溫度", "温度", "濕度", "湿度", "降雨", "警告"],
+    "ja": ["香港 天気", "気温", "湿度", "降水", "警報"],
+    "ko": ["홍콩 날씨", "기온", "습도", "강수", "경보"]
+  },
+  "priority": 0.08,
   "type": "weather",
+  "focus_areas": [
+    "current weather conditions",
+    "next 24 hours forecast",
+    "warnings and alerts",
+    "source timestamp"
+  ],
   "preferred_sources": [
     {
-      "url": "https://www.hko.gov.hk/en/wxinfo/json/one_json.xml",
-      "title": "Hong Kong Observatory Weather API",
-      "description": "Official weather data from HKO"
+      "url": "https://www.hko.gov.hk/en/wxinfo/currwx/current.htm",
+      "title": "Hong Kong Observatory Current Weather",
+      "description": "Official weather bulletin from HKO"
     },
     {
-      "url": "https://api.openweathermap.org/data/2.5/weather?q=Hong+Kong&appid=YOUR_API_KEY",
-      "title": "OpenWeatherMap API",
-      "description": "Global weather API (requires API key)"
+      "url": "https://www.hko.gov.hk/en/wxinfo/currwx/fnd.htm",
+      "title": "Hong Kong 9-Day Forecast",
+      "description": "Official forecast from HKO"
     },
     {
-      "url": "https://www.accuweather.com/en/hk/hong-kong/1123655/current-weather/1123655",
-      "title": "AccuWeather Hong Kong",
-      "description": "Detailed weather forecasts and current conditions"
+      "url": "https://worldweather.wmo.int/en/city.html?cityId=216",
+      "title": "WMO Hong Kong Weather",
+      "description": "WMO city forecast and observations"
     }
   ],
   "search_fallback": true,
