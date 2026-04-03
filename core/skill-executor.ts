@@ -43,6 +43,44 @@ function closeStream(stream: fs.WriteStream | null): void {
     if (stream) stream.end();
 }
 
+/**
+ * Parse skill stdout that may contain mixed log lines + one JSON payload.
+ * Many Python skills print progress logs before printing their final JSON result.
+ */
+function parseSkillStdout(stdout: string): SkillResult | null {
+    const trimmed = stdout.trim();
+    if (!trimmed) return null;
+
+    // Fast path: pure JSON output
+    try {
+        return JSON.parse(trimmed) as SkillResult;
+    } catch {
+        // Fall through to line-by-line recovery.
+    }
+
+    // Recovery path: parse from the last JSON-looking line.
+    const lines = trimmed.split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const rawLine = lines[i];
+        if (!rawLine) {
+            continue;
+        }
+
+        const line = rawLine.trim();
+        if (!line || !line.startsWith('{') || !line.endsWith('}')) {
+            continue;
+        }
+
+        try {
+            return JSON.parse(line) as SkillResult;
+        } catch {
+            // Keep scanning upward.
+        }
+    }
+
+    return null;
+}
+
 // Cached conda Python path (resolved once on first use)
 let cachedCondaPython: string | null = null;
 
@@ -301,12 +339,10 @@ export async function executeSkill(
                 // Try to extract the real error from stdout (Python skills output errors as JSON to stdout)
                 let errorDetail = stderr || 'Unknown error';
                 if (stdout.trim()) {
-                    try {
-                        const stdoutResult = JSON.parse(stdout.trim()) as Record<string, unknown>;
-                        if (stdoutResult.error || stdoutResult.message) {
-                            errorDetail = String(stdoutResult.error || stdoutResult.message || errorDetail);
-                        }
-                    } catch {
+                    const stdoutResult = parseSkillStdout(stdout) as unknown as Record<string, unknown> | null;
+                    if (stdoutResult && (stdoutResult.error || stdoutResult.message)) {
+                        errorDetail = String(stdoutResult.error || stdoutResult.message || errorDetail);
+                    } else {
                         // stdout is not JSON, include it as additional context
                         errorDetail = `${stderr}\nstdout: ${stdout.trim()}`;
                     }
@@ -321,8 +357,17 @@ export async function executeSkill(
             
             try {
                 // Parse the skill output
-                const result = JSON.parse(stdout.trim()) as SkillResult;
-                resolve(result);
+                const result = parseSkillStdout(stdout);
+                if (result) {
+                    resolve(result);
+                    return;
+                }
+
+                // If not valid JSON, return as message
+                resolve({
+                    success: true,
+                    message: stdout.trim(),
+                });
             } catch {
                 // If not valid JSON, return as message
                 resolve({
