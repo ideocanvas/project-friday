@@ -3,12 +3,17 @@
   "type": "news",
   "preferred_sources": [
     {
-      "url": "https://news.google.com/rss?hl=en-HK&gl=HK&ceid=HK:en",
-      "title": "Google News - Hong Kong",
-      "description": "Latest Hong Kong news from Google News RSS"
+      "url": "https://news.google.com/rss/search?q=%E9%A6%99%E6%B8%AF%20news&hl=zh-HK&gl=HK&ceid=HK:zh-Hant",
+      "title": "Google News - Hong Kong Geo RSS",
+      "description": "Google News geographic RSS feed for Hong Kong region"
+    },
+    {
+      "url": "https://hongkongfp.com/feed/",
+      "title": "Hong Kong Free Press",
+      "description": "Independent English news covering Hong Kong politics and society"
     }
   ],
-  "focus_areas": ["Hong Kong news", "local Hong Kong events", "Hong Kong politics", "Hong Kong economy"]
+  "focus_areas": ["Hong Kong news", "Hong Kong politics", "Hong Kong economy", "Hong Kong government", "Hong Kong society", "Chinese news related to Hong Kong", "Asia news affecting Hong Kong"],
   "search_fallback": true,
   "timestamp": "2026-04-03T00:23:58Z"
 }

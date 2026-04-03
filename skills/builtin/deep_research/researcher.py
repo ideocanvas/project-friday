@@ -235,21 +235,31 @@ class DeepResearcher:
 
         try:
             self._create_temp_dir()
-            self._load_memory()
-            if not self.memory:
-                self.memory = self._load_builtin_memory()
+            # Load builtin memory first
+            self.memory = self._load_builtin_memory()
+            # If no builtin or not real-time query, try user memory
+            if not self.memory or not self._is_realtime_query(self.query):
+                user_memory = self._load_memory()
+                if user_memory and not self._is_realtime_query(self.query):
+                    mem_time = datetime.fromisoformat(user_memory["timestamp"][:-1])
+                    now = datetime.utcnow()
+                    age_hours = (now - mem_time).total_seconds() / 3600
+                    if age_hours < 1:
+                        self.memory = user_memory
 
             # Check if we can use memory
             if self.memory:
                 mem_time = datetime.fromisoformat(self.memory["timestamp"][:-1])
                 now = datetime.utcnow()
                 age_hours = (now - mem_time).total_seconds() / 3600
-                # For builtin memory, allow reuse for real-time queries
                 is_builtin = "preferred_sources" in self.memory
-                if not is_builtin and age_hours < 1:
-                    print(
-                        f"[Researcher] Using memory ({age_hours:.1f}h old, builtin: {is_builtin})"
-                    )
+                # Only reuse user memory if recent and not real-time
+                if (
+                    not is_builtin
+                    and age_hours < 1
+                    and not self._is_realtime_query(self.query)
+                ):
+                    print(f"[Researcher] Using user memory ({age_hours:.1f}h old)")
                     result.findings = self.memory["findings"]
                     result.summary = self.memory["summary"]
                     result.sources_visited = self.memory["sources_visited"]
@@ -617,13 +627,22 @@ Return ONLY the JSON array."""
 
     def _plan_research(self) -> Optional[Dict[str, Any]]:
         """Use LLM to plan research strategy."""
-        prompt = plan_research_prompt(self.query, self.mode)
-        return call_llm_json(
+        # Override search_type for news queries
+        mode = self.mode
+        if "news" in self.query.lower():
+            mode = "news"  # Special mode to trigger news search
+        prompt = plan_research_prompt(self.query, mode)
+        result = call_llm_json(
             prompt,
             system_msg="You are a research planning assistant.",
             temperature=0.3,
             max_tokens=500,
         )
+        if result and "news" in self.query.lower():
+            result["search_type"] = "news"
+            if not result.get("date_range"):
+                result["date_range"] = "day"
+        return result
 
     def _rank_urls(self, search_results: List[Dict[str, Any]]) -> List[int]:
         """Use LLM to rank search results by relevance."""

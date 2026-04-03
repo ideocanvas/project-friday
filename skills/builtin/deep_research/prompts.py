@@ -75,8 +75,10 @@ Return a JSON object with:
 
 Guidelines:
 - Rank by likelihood of containing authoritative, direct answers
-- Prefer official sources, well-known publications
-- Skip obvious ads, clickbait, or low-quality sites
+- Prefer official sources, well-known publications, news sites
+- Strongly prioritize text content over videos, images, or social media
+- Skip YouTube, social media, ads, clickbait, low-quality sites, or video content
+- For news queries, prefer recent articles from reputable news outlets
 - Return indices (1-based) in order of preference
 
 Return ONLY the JSON object, no other text."""
