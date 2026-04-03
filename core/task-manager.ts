@@ -349,6 +349,9 @@ async function runAgentLoopInBackground(task: Task): Promise<void> {
                         const results = await processToolCalls([toolCall], task.phone);
                         const result = results[0];
                         if (result) {
+                            // Debug: log the full result structure
+                            appendLog(task, 'debug', `Full result: ${JSON.stringify(result).substring(0, 1000)}`);
+                            
                             // Check if skill returned an audio_path (for TTS/voice responses)
                             let audioPath: string | undefined;
                             if (result.result.data && typeof result.result.data === 'object') {
