@@ -21,6 +21,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { processMessage as processWithLLM, loadRecentMemory } from './message-processor.js';
@@ -74,6 +75,73 @@ interface StatusData {
         uptime: string;
         last_run: string;
         pages_deleted: number;
+    };
+}
+
+function guessAudioMimeType(audioPath: string): string {
+    const lower = audioPath.toLowerCase();
+    if (lower.endsWith('.mp3')) return 'audio/mpeg';
+    if (lower.endsWith('.ogg') || lower.endsWith('.oga')) return 'audio/ogg; codecs=opus';
+    if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'audio/mp4';
+    if (lower.endsWith('.wav')) return 'audio/wav';
+    if (lower.endsWith('.webm')) return 'audio/webm';
+    return 'audio/mpeg';
+}
+
+function shouldSendAsPtt(audioPath: string): boolean {
+    const lower = audioPath.toLowerCase();
+    // WhatsApp voice-note (PTT) is most reliable with opus-in-ogg.
+    return lower.endsWith('.ogg') || lower.endsWith('.oga') || lower.endsWith('.opus');
+}
+
+function prepareWhatsAppAudio(audioPath: string): {
+    sendPath: string;
+    mimetype: string;
+    ptt: boolean;
+} {
+    const ext = path.extname(audioPath).toLowerCase();
+
+    // Already in WhatsApp-friendly voice-note container/codec path.
+    if (ext === '.ogg' || ext === '.oga' || ext === '.opus') {
+        return {
+            sendPath: audioPath,
+            mimetype: 'audio/ogg; codecs=opus',
+            ptt: true,
+        };
+    }
+
+    // Convert other formats (e.g. mp3) to opus-in-ogg for better WhatsApp compatibility.
+    const outDir = path.join(TEMP_MEDIA_PATH, 'wa-audio');
+    try {
+        fs.mkdirSync(outDir, { recursive: true });
+    } catch {
+        // Fallback below if conversion fails.
+    }
+
+    const outPath = path.join(outDir, `wa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ogg`);
+    const ffmpeg = spawnSync('ffmpeg', [
+        '-y',
+        '-i', audioPath,
+        '-c:a', 'libopus',
+        '-b:a', '32k',
+        '-vbr', 'on',
+        '-application', 'voip',
+        outPath,
+    ], { stdio: 'ignore' });
+
+    if (ffmpeg.status === 0 && fs.existsSync(outPath)) {
+        return {
+            sendPath: outPath,
+            mimetype: 'audio/ogg; codecs=opus',
+            ptt: true,
+        };
+    }
+
+    // Graceful fallback if ffmpeg isn't available or conversion failed.
+    return {
+        sendPath: audioPath,
+        mimetype: guessAudioMimeType(audioPath),
+        ptt: shouldSendAsPtt(audioPath),
     };
 }
 
@@ -212,23 +280,51 @@ class WhatsAppGateway {
                     
                     // If we have an audio response (from voice skill), send it as audio
                     if (response.audio_path) {
-                        const audioBuffer = fs.readFileSync(response.audio_path);
-                        await this.sock.sendMessage(jid, { 
+                        const prepared = prepareWhatsAppAudio(response.audio_path);
+                        const audioBuffer = fs.readFileSync(prepared.sendPath);
+                        const mimetype = prepared.mimetype;
+                        const ptt = prepared.ptt;
+                        const sent = await this.sock.sendMessage(jid, { 
                             audio: audioBuffer,
-                            mimetype: 'audio/mp3',
-                            ptt: true  // Push-to-talk style for voice messages
+                            mimetype,
+                            ptt,
                         });
-                        logger.info(`Sent audio response from ${response.audio_path}`);
+                        logger.info(`Sent audio response from ${prepared.sendPath} (source=${response.audio_path}, mimetype=${mimetype}, ptt=${ptt})`);
+                        logger.info(`Audio response key: remoteJid=${sent?.key?.remoteJid || 'unknown'} id=${sent?.key?.id || 'unknown'}`);
                     }
                     
                     // Always send text response if available
                     if (response.response) {
-                        await this.sock.sendMessage(jid, { text: response.response });
+                        const sent = await this.sock.sendMessage(jid, { text: response.response });
+                        logger.info(`Text response key: remoteJid=${sent?.key?.remoteJid || 'unknown'} id=${sent?.key?.id || 'unknown'}`);
                     }
                 } catch (error) {
                     logger.error('Error processing message:', error);
                     await this.sock.sendMessage(jid, { text: 'Sorry, I encountered an error. Please try again.' });
                 }
+            }
+        });
+
+        // Delivery telemetry for outbound/inbound lifecycle.
+        this.sock.ev.on('messages.update', (updates: any[]) => {
+            for (const upd of updates || []) {
+                const key = upd?.key;
+                const status = upd?.update?.status;
+                const remoteJid = key?.remoteJid || 'unknown';
+                const id = key?.id || 'unknown';
+                if (status !== undefined) {
+                    logger.info(`📬 Message status update: remoteJid=${remoteJid} id=${id} status=${status}`);
+                }
+            }
+        });
+
+        this.sock.ev.on('message-receipt.update', (updates: any[]) => {
+            for (const upd of updates || []) {
+                const key = upd?.key;
+                const remoteJid = key?.remoteJid || 'unknown';
+                const id = key?.id || 'unknown';
+                const receipts = Array.isArray(upd?.receipt) ? upd.receipt.length : 0;
+                logger.info(`📨 Receipt update: remoteJid=${remoteJid} id=${id} receipts=${receipts}`);
             }
         });
 
@@ -552,29 +648,50 @@ class WhatsAppGateway {
     async sendQueuedMessage(msg: QueuedMessage): Promise<void> {
         if (!this.isReady || !this.sock) return;
 
-        // Use the exact JID if it contains '@', otherwise fall back to string manipulation
-        const jid = msg.to.includes('@') ? msg.to : this.phoneToJid(msg.to);
+        const jidCandidates = this.resolveRecipientJids(msg.to);
+
+        const sendPayload = (msg.type === 'audio' && msg.audio_path)
+            ? (() => {
+                const prepared = prepareWhatsAppAudio(msg.audio_path);
+                return {
+                    audio: fs.readFileSync(prepared.sendPath),
+                    mimetype: prepared.mimetype,
+                    ptt: prepared.ptt,
+                };
+            })()
+            : { text: msg.message };
 
         try {
+            let lastError: unknown;
+            let deliveredJid: string | null = null;
+
+            for (const jid of jidCandidates) {
+                try {
+                    const sent = await this.sock.sendMessage(jid, sendPayload as any);
+                    deliveredJid = jid;
+                    logger.info(`Queued message key: remoteJid=${sent?.key?.remoteJid || 'unknown'} id=${sent?.key?.id || 'unknown'} via=${jid}`);
+                    break;
+                } catch (err) {
+                    lastError = err;
+                    logger.warn(`Send attempt failed for ${jid}, trying next candidate if available`);
+                }
+            }
+
+            if (!deliveredJid) {
+                throw lastError || new Error('No recipient JID candidates available');
+            }
+
             if (msg.type === 'audio' && msg.audio_path) {
-                // Send audio message
-                const audioBuffer = fs.readFileSync(msg.audio_path);
-                await this.sock.sendMessage(jid, {
-                    audio: audioBuffer,
-                    mimetype: 'audio/mp3', // Assume MP3 for now
-                });
-                logger.info(`✅ Sent audio message from ${msg.audio_path} to ${msg.to}`);
+                logger.info(`✅ Sent audio message from ${msg.audio_path} to ${msg.to} (via ${deliveredJid})`);
             } else {
-                // Send text message
-                await this.sock.sendMessage(jid, { text: msg.message });
-                logger.info(`✅ Sent queued message to ${msg.to}`);
+                logger.info(`✅ Sent queued message to ${msg.to} (via ${deliveredJid})`);
             }
 
             // Mark as sent
             this.updateQueueMessageStatus(msg.id, 'sent');
 
             // Remember giving this response!
-            this.appendMemory(jid, 'assistant', msg.message || '[Audio response]');
+            this.appendMemory(deliveredJid, 'assistant', msg.message || '[Audio response]');
         } catch (error) {
             logger.error(`Failed to send message to ${msg.to}:`, error);
 
@@ -619,6 +736,21 @@ class WhatsAppGateway {
      */
     phoneToJid(phone: string): string {
         return phone.replace(/\D/g, '') + '@s.whatsapp.net';
+    }
+
+    /**
+     * Resolve queue target into ordered recipient candidates.
+     * If a full JID is already stored, use it as-is.
+     * For bare phone numbers, try @lid first (often the active chat JID), then fallback to @s.whatsapp.net.
+     */
+    resolveRecipientJids(to: string): string[] {
+        if (!to.includes('@')) {
+            const phone = to.replace(/\D/g, '');
+            if (!phone) return [];
+            return [`${phone}@lid`, `${phone}@s.whatsapp.net`];
+        }
+
+        return [to];
     }
 
     /**
