@@ -276,6 +276,12 @@ export async function executeSkill(
             params,
             user_id: userId,
         });
+
+        const internalApiPort = process.env.INTERNAL_API_PORT || 3001;
+        const envVars = {
+            ...process.env,
+            FRIDAY_API_URL: `http://localhost:${internalApiPort}`
+        };
         
         let command = '';
         let args: string[] = [];
@@ -300,7 +306,7 @@ export async function executeSkill(
         }
         
         const fullCommand = `${command} ${args.join(' ')}`;
-        console.log(`[Skill] Executing: ${fullCommand}`);
+        console.log(`[Skill] Executing: ${fullCommand} with FRIDAY_API_URL=${envVars.FRIDAY_API_URL}`);
 
         const logDir = ensureSkillLogDir(skillName);
         const outStream = createWriteStreamSafe(path.join(logDir, 'out.log'));
@@ -309,7 +315,7 @@ export async function executeSkill(
 
         const child = spawn(command, args, {
             cwd: process.cwd(),
-            env: process.env,
+            env: envVars,
         });
         
         let stdout = '';

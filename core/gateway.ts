@@ -23,9 +23,12 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import express from 'express';
 import 'dotenv/config';
+
 import { processMessage as processWithLLM, loadRecentMemory } from './message-processor.js';
 import { executeSkill } from './skill-executor.js';
+import { registerPendingSkillRequest } from './skill-registry.js';
 import qrcode from 'qrcode-terminal';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -155,6 +158,62 @@ class WhatsAppGateway {
     // Track processed messages to prevent duplicates
     private processedMessages: Set<string> = new Set();
     private readonly MAX_PROCESSED_CACHE = 1000; // Keep last 1000 message IDs
+
+    /**
+     * Start Internal HTTP Server for Skills
+     */
+    startInternalApi(): void {
+        const app = express();
+        const port = process.env.INTERNAL_API_PORT || 3001;
+        app.use(express.json({ limit: '10mb' }));
+
+        app.post('/execute/message', async (req, res): Promise<void> => {
+            const { jid, payload } = req.body;
+            if (!jid || !payload) {
+                res.status(400).json({ error: 'Missing jid or payload' });
+                return;
+            }
+            try {
+                await this.sendDirectMessage(jid, payload);
+                if (payload.text) {
+                    this.appendMemory(jid, 'assistant', payload.text);
+                } else if (payload.audio_path) {
+                    this.appendMemory(jid, 'assistant', '[Audio response]');
+                }
+                res.json({ success: true });
+            } catch (err: any) {
+                logger.error(`Internal API sendDirectMessage error: ${err.message}`);
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        app.post('/execute/ask', async (req, res): Promise<void> => {
+            const { jid, skillName, question } = req.body;
+            if (!jid || !skillName || !question) {
+                res.status(400).json({ error: 'Missing jid, skillName, or question' });
+                return;
+            }
+            
+            try {
+                // Send the question to the user directly
+                await this.sendDirectMessage(jid, { text: question });
+                this.appendMemory(jid, 'assistant', question);
+
+                // Register a pending request for user reply
+                registerPendingSkillRequest(jid, skillName, question, 
+                    (answer) => { res.json({ success: true, answer }); },
+                    (err) => { res.status(500).json({ error: err.message }); }
+                );
+            } catch (err: any) {
+                logger.error(`Failed to send skill question: ${err.message}`);
+                res.status(500).json({ error: 'Failed to deliver question' });
+            }
+        });
+
+        app.listen(port, () => {
+            logger.info(`🔌 Internal Skill API running on port ${port}`);
+        });
+    }
 
     /**
      * Connect to WhatsApp
@@ -754,6 +813,32 @@ class WhatsAppGateway {
     }
 
     /**
+     * Send direct message from external or internal sources bypassing the queue
+     */
+    async sendDirectMessage(jid: string, payload: any): Promise<any> {
+        if (!this.sock || !this.isReady) {
+            throw new Error('WhatsApp gateway is not ready');
+        }
+        
+        let sendPayload = payload;
+        if (payload.audio_path) {
+            const prepared = prepareWhatsAppAudio(payload.audio_path);
+            const audioBuffer = fs.readFileSync(prepared.sendPath);
+            sendPayload = {
+                ...payload,
+                audio: audioBuffer,
+                mimetype: prepared.mimetype,
+                ptt: prepared.ptt,
+            };
+            delete sendPayload.audio_path;
+        }
+
+        const sent = await this.sock.sendMessage(jid, sendPayload);
+        logger.info(`Direct message sent to ${jid}: ${JSON.stringify(payload).substring(0, 100)}...`);
+        return sent;
+    }
+
+    /**
      * Extract phone from JID
      */
     jidToPhone(jid: string): string {
@@ -781,6 +866,7 @@ async function main(): Promise<void> {
     const gateway = new WhatsAppGateway();
     
     try {
+        gateway.startInternalApi();
         await gateway.connect();
     } catch (error) {
         logger.error('Failed to start gateway:', error);

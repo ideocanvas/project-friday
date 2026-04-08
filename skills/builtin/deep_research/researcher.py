@@ -19,6 +19,7 @@ import subprocess
 import sys
 import re
 import unicodedata
+import requests
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
@@ -43,11 +44,39 @@ MAX_SOURCES_DEFAULT = int(os.getenv("DEEP_RESEARCH_MAX_SOURCES", "3"))
 MAX_ITERATIONS = int(os.getenv("DEEP_RESEARCH_MAX_ITERATIONS", "10"))
 TEMP_DIR = os.getenv("DEEP_RESEARCH_TEMP_DIR", "./temp/deep_research")
 CLOUDFLARE_TUNNEL_URL = os.getenv("CLOUDFLARE_TUNNEL_URL", "http://localhost:3000")
+FRIDAY_API_URL = os.getenv("FRIDAY_API_URL", "http://localhost:3001")
 MAX_TEXT_LENGTH_FOR_PAGE = int(os.getenv("DEEP_RESEARCH_TEXT_THRESHOLD", "1000"))
 MEMORY_MAX_AGE_HOURS = float(os.getenv("DEEP_RESEARCH_MEMORY_MAX_AGE_HOURS", "1"))
 REALTIME_MEMORY_MAX_AGE_HOURS = float(
     os.getenv("DEEP_RESEARCH_REALTIME_MEMORY_MAX_AGE_HOURS", "0.25")
 )
+
+def send_direct_message(jid: str, text: str):
+    """Sends a direct message to the user asynchronously, bypassing the return loop."""
+    if not FRIDAY_API_URL or not jid:
+        return
+    try:
+        requests.post(f"{FRIDAY_API_URL}/execute/message", json={"jid": jid, "payload": {"text": text}}, timeout=5)
+    except Exception as e:
+        print(f"[Warning] Failed to send direct message to {jid}: {e}", file=sys.stderr)
+
+def ask_user(jid: str, question: str, skill_name: str = "deep_research") -> Optional[str]:
+    """Pauses execution, asks the user directly, and block-waits for their reply via the HTTP request."""
+    if not FRIDAY_API_URL or not jid:
+        return None
+    try:
+        resp = requests.post(f"{FRIDAY_API_URL}/execute/ask", json={
+            "jid": jid,
+            "skillName": skill_name,
+            "question": question
+        }, timeout=86400) # Long timeout (24h)
+        data = resp.json()
+        if data.get("success"):
+            return data.get("answer")
+    except Exception as e:
+        print(f"[Warning] Failed to ask user directly {jid}: {e}", file=sys.stderr)
+    return None
+
 BUILTIN_MIN_SCORE = float(os.getenv("DEEP_RESEARCH_BUILTIN_MIN_SCORE", "0.45"))
 USER_MEMORY_MIN_SUMMARY_LEN = int(
     os.getenv("DEEP_RESEARCH_USER_MEMORY_MIN_SUMMARY_LEN", "120")

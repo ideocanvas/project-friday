@@ -27,6 +27,7 @@ import { isToolCallingEnabled, isBuiltInTool, skillsToTools, type ToolCall } fro
 import { processToolCalls } from './skill-executor.js';
 import { triageIntent, type TriageResult } from './intent-triage.js';
 import { createTask, startTask, getTaskSummary, getTaskLogs, listTasks, cancelTask, activeTaskCount, type Task } from './task-manager.js';
+import { getPendingSkillRequest, resolvePendingSkillRequest } from './skill-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -879,6 +880,47 @@ export async function processMessage(
         
         // Load recent context
         const history = loadRecentMemory(phone);
+        
+        // ── Pending Skill Triage ───────────────────────────────────────────
+        if (options?.jid) {
+            const pendingReq = getPendingSkillRequest(options.jid);
+            if (pendingReq) {
+                console.log(`[MessageProcessor] Found pending request for skill ${pendingReq.skillName}: "${pendingReq.question}"`);
+                // Let the LLM decide if this message is an answer to the pending question
+                // Or if it's a completely new instruction to interrupt
+                const decisionPrompt = `You are actively running a background skill called "${pendingReq.skillName}".
+It has paused and asked the user this question: "${pendingReq.question}".
+The user just replied with: "${message}"
+
+Does the user's reply attempt to answer the question, or provide the requested information to let the skill continue?
+Respond with "YES" if it answers/relates to the question or allows the skill to proceed.
+Respond with "NO" if it's a completely unrelated new task or an interruption that should spawn a new task.`;
+
+                try {
+                    const decisionResponse = await llmClient.chatCompletion({
+                        messages: [
+                            { role: 'system', content: 'You classify user intent. Answer only YES or NO.' },
+                            { role: 'user', content: decisionPrompt }
+                        ],
+                        temperature: 0
+                    });
+                    
+                    const answer = (decisionResponse.content || '').trim().toUpperCase();
+                    if (answer.includes('YES')) {
+                        console.log(`[MessageProcessor] Message answers pending question for skill ${pendingReq.skillName}. Resolving callback.`);
+                        resolvePendingSkillRequest(options.jid, message);
+                        return { success: true, response: '' }; // No immediate response, let the skill continue
+                    } else {
+                        console.log(`[MessageProcessor] Message is unrelated to pending skill ${pendingReq.skillName}. Spawning new task / handling independently.`);
+                    }
+                } catch (e) {
+                    console.error('[MessageProcessor] Error checking pending skill request intent. Falling back to YES.', e);
+                    // Fallback: If LLM check fails, assume they are answering the question to unblock it.
+                    resolvePendingSkillRequest(options.jid, message);
+                    return { success: true, response: '' };
+                }
+            }
+        }
         
         // ── Intent Triage ──────────────────────────────────────────────────
         let finalMessage = message;
