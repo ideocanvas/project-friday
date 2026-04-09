@@ -97,12 +97,12 @@
       "description": "Default voice for TTS. For Qwen3-TTS, use 'default'."
     },
     "TTS_LANG_CODE": {
-      "default": "zh",
-      "description": "Language code for TTS: 'en' for English, 'zh' for Chinese"
+      "default": "en",
+      "description": "Language code for TTS: 'en' for English, 'zh' for Chinese. English uses English reference audio for better number pronunciation."
     },
     "TTS_REF_AUDIO": {
       "default": "references/speaker01.wav",
-      "description": "Reference audio file for Qwen3-TTS voice cloning"
+      "description": "Reference audio file for Chinese TTS. English TTS uses speaker_en.wav automatically."
     },
     "TTS_REF_TEXT": {
       "default": "是呀，他还想换个地球仪哈哈哈，看来给你积累了一些快乐值了，你还想不想再听一个其他的笑话呀？",
