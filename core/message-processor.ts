@@ -374,10 +374,33 @@ export function loadRecentMemory(phone: string, limit: number = MAX_CONTEXT_MESS
 
         // Add a time gap separator if this is an older block
         if (i < blocks.length - 1) {
-            allMessages.unshift({
-                role: 'system',
-                content: `[Conversation paused. Resuming at a later time.]`
-            });
+            const nextBlock = blocks[i + 1];
+            if (nextBlock) {
+                const gapMs = nextBlock.startTime.getTime() - block.endTime.getTime();
+                const diffMins = Math.round(gapMs / 60000);
+                let timeGapStr = '';
+                
+                if (diffMins < 60) {
+                    timeGapStr = `${diffMins} minutes later`;
+                } else {
+                    const diffHours = Math.round(diffMins / 60);
+                    if (diffHours < 24) {
+                        timeGapStr = `${diffHours} hours later`;
+                    } else {
+                        timeGapStr = `${Math.round(diffHours / 24)} days later`;
+                    }
+                }
+                
+                allMessages.unshift({
+                    role: 'system',
+                    content: `[Conversation paused. Resuming ${timeGapStr}]`
+                });
+            } else {
+                allMessages.unshift({
+                    role: 'system',
+                    content: `[Conversation paused. Resuming at a later time.]`
+                });
+            }
         }
         
         // Add messages from this block (in reverse order, then reverse at the end)
@@ -930,22 +953,23 @@ Respond with "NO" if it's a completely unrelated new task or an interruption tha
             const triageResult = await triageIntent(message, history);
             console.log(`[MessageProcessor] Triage: category=${triageResult.category}, query="${triageResult.query}", confidence=${triageResult.confidence}, reason="${triageResult.reason}"`);
             
-            // The Agent responding to this intent will only see the summarized query, stripped of chat history
-            finalMessage = triageResult.query;
-            finalHistory = [];
-            
             if (triageResult.category === 'background_task') {
+                // The Agent responding to this intent will only see the summarized query, stripped of chat history
+                finalMessage = triageResult.query;
+                finalHistory = [];
                 return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
             }
             
             if (triageResult.category === 'skill_generation') {
                 // For now, still dispatch as a background task with a note
                 // TODO: Integrate with evolution.ts for actual skill generation
+                finalMessage = triageResult.query;
+                finalHistory = [];
                 console.log('[MessageProcessor] Skill generation requested, dispatching as background task with evolution trigger');
                 return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
             }
             
-            // rapid_response → fall through to blocking agent loop using the summarized query
+            // rapid_response → fall through to blocking agent loop, keeping original message and history intact
         }
         
         // ── Blocking Agent Loop ────────────────────────────────────────────
