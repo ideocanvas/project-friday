@@ -99,11 +99,35 @@ async function main() {
                 console.log(JSON.stringify({ success: true, message: `Reminder ${params.reminder_id} successfully deleted.` }));
             }
 
+        } else if (action === 'update') {
+            if (!params.reminder_id) {
+                console.log(JSON.stringify({ success: false, error: 'Missing required parameter for update: reminder_id' }));
+                process.exit(0);
+            }
+
+            const reminderIndex = reminders.findIndex(r => r.id === params.reminder_id);
+            if (reminderIndex === -1) {
+                console.log(JSON.stringify({ success: false, message: `No reminder found with ID ${params.reminder_id}` }));
+                process.exit(0);
+            }
+
+            const r = reminders[reminderIndex];
+            if (params.time) r.time = params.time;
+            if (params.message) {
+                r.args = r.args || {};
+                r.args.message = params.message;
+            }
+            if (params.repeat !== undefined) r.repeat = params.repeat;
+
+            fs.writeFileSync(reminderPath, JSON.stringify(reminders, null, 2));
+            console.log(JSON.stringify({ success: true, message: `Reminder ${params.reminder_id} successfully updated.`, reminder: r }));
+
         } else if (action === 'list') {
             if (reminders.length === 0) {
                 console.log(JSON.stringify({ success: true, message: "You have no active reminders.", reminders: [] }));
             } else {
-                console.log(JSON.stringify({ success: true, message: `You have ${reminders.length} active reminder(s).`, reminders }));
+                const details = reminders.map(r => `- ID: ${r.id}, Time: ${r.time}, Repeat: ${r.repeat || 'none'}, Message: ${r.args?.message || '(none)'}`).join('\n');
+                console.log(JSON.stringify({ success: true, message: `You have ${reminders.length} active reminder(s):\n${details}`, reminders }));
             }
         } else {
             console.log(JSON.stringify({ success: false, error: `Unknown action: ${action}` }));

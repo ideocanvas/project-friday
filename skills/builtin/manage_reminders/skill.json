@@ -2,7 +2,7 @@
   "id": "manage_reminders",
   "name": "manage_reminders",
   "enabled": true,
-  "description": "Create, list, or delete reminders for the user. Use this when the user asks to set a reminder (e.g., 'remind me to check the news at 9am daily'), view their reminders, or cancel a reminder.",
+  "description": "Create, list, update, or delete reminders for the user. Use this when the user asks to set a reminder (e.g., 'remind me to check the news at 9am daily'), view their reminders, update an existing reminder, or cancel a reminder.",
   "file": "index.js",
   "type": "builtin",
   "prompt": "Example to create: {\"action\": \"create\", \"time\": \"2026-04-09T09:00:00Z\", \"message\": \"Read news\", \"repeat\": \"daily\"}",
@@ -10,8 +10,8 @@
     "action": {
       "type": "string",
       "required": true,
-      "enum": ["create", "list", "delete"],
-      "description": "The action to perform: 'create' to add a reminder, 'list' to view all, or 'delete' to remove one."
+      "enum": ["create", "list", "update", "delete"],
+      "description": "The action to perform: 'create' to add a reminder, 'list' to view all, 'update' to modify, or 'delete' to remove one."
     },
     "time": {
       "type": "string",
@@ -24,11 +24,11 @@
     "repeat": {
       "type": "string",
       "enum": ["daily", "weekly", "monthly"],
-      "description": "Optional recurrence pattern for 'create'. Omit for one-time reminders."
+      "description": "Optional recurrence pattern for 'create' or 'update'. Omit for one-time reminders."
     },
     "reminder_id": {
       "type": "string",
-      "description": "Required for 'delete'. The UUID of the reminder to delete, obtained by calling 'list'."
+      "description": "Required for 'delete' and 'update'. The UUID of the reminder to modify/delete, obtained by calling 'list'."
     }
   }
 }

@@ -118,6 +118,8 @@ function checkReminders(): void {
             const now = new Date();
             const remaining: Reminder[] = [];
             
+            let updated = false;
+            
             for (const rem of remindersRaw) {
                 const remTime = new Date(rem.time);
                 
@@ -134,14 +136,17 @@ function checkReminders(): void {
                             ...rem,
                             time: calculateNextTime(rem.time, rem.repeat)
                         });
+                        updated = true;
+                    } else {
+                        updated = true; // it was removed
                     }
                 } else {
                     remaining.push(rem);
                 }
             }
             
-            // Update if any removed
-            if (remaining.length !== remindersRaw.length) {
+            // Update if any updated or removed
+            if (updated) {
                 fs.writeFileSync(reminderPath, JSON.stringify(remaining, null, 2));
             }
         } catch (e) {
