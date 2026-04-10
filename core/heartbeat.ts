@@ -15,6 +15,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Configuration
+import { processMessage as processWithLLM } from './message-processor.js';
+
 const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const QUEUE_PATH = process.env.QUEUE_PATH || './queue';
 const SKILLS_PATH = process.env.SKILLS_PATH || './skills';
@@ -100,7 +102,7 @@ interface StatusData {
 /**
  * Main heartbeat loop
  */
-function checkReminders(): void {
+async function checkReminders(): Promise<void> {
     console.log('❤️ Heartbeat check...');
     
     if (!fs.existsSync(USER_DATA_ROOT)) {
@@ -128,14 +130,38 @@ function checkReminders(): void {
                 if (now >= remTime) {
                     console.log(`⏰ Triggering reminder for ${user} at ${remTime.toISOString()}`);
                     
-                    if (rem.skill && rem.skill !== 'noop') {
-                        console.log(`Executing customized skill: ${rem.skill}`);
-                        executeSkill(rem.skill, user, (rem.args as Record<string, unknown>) || {});
-                    } else {
-                        // Send simple reminder notification directly
-                        const message = rem.args?.message || `Reminder: ${rem.skill}`;
-                        queueMessage(user, String(message));
+                    let instruction = rem.args?.message;
+                    if (!instruction && rem.args) {
+                        // Fallback to extract instruction from other keys like 'query' or 'text' if skill was used
+                        instruction = rem.args.query || rem.args.text || JSON.stringify(rem.args);
                     }
+                    const messageText = String(instruction || `[Reminder Event: ${rem.skill}]`);
+                    
+                    console.log(`Processing reminder via agent loop: ${messageText}`);
+                    
+                    // Append user message directly to memory so LLM has context
+                    const entry = {
+                        timestamp: new Date().toISOString(),
+                        role: 'user',
+                        content: `[Scheduled Reminder] Please process this instruction as requested: ${messageText}`
+                    };
+                    const memoryPath = path.join(USER_DATA_ROOT, user, 'memory.log');
+                    fs.appendFileSync(memoryPath, JSON.stringify(entry) + '\n');
+                    
+                    // Fire and forget the LLM process, or await it
+                    // Doing await inside this loop could block other reminders, better to fire alongside
+                    processWithLLM(user, messageText, { jid: `${user}@s.whatsapp.net` })
+                        .then(result => {
+                            if (result.success && !result.backgrounded && result.response) {
+                                // Agent completed sync response, queue it to the user
+                                queueMessage(user, result.response, result.audio_path);
+                            }
+                            // If it failed or backgrounded, no immediate action needed sync here
+                        })
+                        .catch(err => {
+                            console.error(`LLM scheduling failed for ${user}:`, err);
+                            queueMessage(user, `I was reminded about "${messageText}", but I hit an error trying to process it.`);
+                        });
                     
                     // Keep if recurring, remove if one-time
                     if (rem.repeat) {
