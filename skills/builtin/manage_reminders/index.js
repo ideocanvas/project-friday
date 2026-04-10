@@ -55,8 +55,8 @@ async function main() {
         }
 
         if (action === 'create') {
-            if (!params.time || !params.message) {
-                console.log(JSON.stringify({ success: false, error: 'Missing required parameters for create: time and message' }));
+            if (!params.time || (!params.message && !params.skillName)) {
+                console.log(JSON.stringify({ success: false, error: 'Missing required parameters for create: time, and either message or skillName' }));
                 process.exit(0);
             }
 
@@ -64,8 +64,8 @@ async function main() {
             const newReminder = {
                 id: randomUUID(),
                 time: params.time,
-                skill: 'noop', // just send the message
-                args: {
+                skill: params.skillName || 'noop', // Execute the given skill, or standard text
+                args: params.skillArgs || {
                     message: params.message
                 },
                 repeat: params.repeat || null,
@@ -78,7 +78,7 @@ async function main() {
 
             const response = {
                 success: true,
-                message: `Reminder successfully scheduled for ${params.time}${params.repeat ? ` (repeating ${params.repeat})` : ''}.`,
+                message: `Reminder successfully scheduled for ${params.time}${params.repeat ? ` (repeating ${params.repeat})` : ''} to execute ${params.skillName || 'standard message'}.`,
                 reminder_id: newReminder.id
             };
             console.log(JSON.stringify(response));
@@ -117,6 +117,8 @@ async function main() {
                 r.args = r.args || {};
                 r.args.message = params.message;
             }
+            if (params.skillName !== undefined) r.skill = params.skillName;
+            if (params.skillArgs !== undefined) r.args = params.skillArgs;
             if (params.repeat !== undefined) r.repeat = params.repeat;
 
             fs.writeFileSync(reminderPath, JSON.stringify(reminders, null, 2));
@@ -126,7 +128,7 @@ async function main() {
             if (reminders.length === 0) {
                 console.log(JSON.stringify({ success: true, message: "You have no active reminders.", reminders: [] }));
             } else {
-                const details = reminders.map(r => `- ID: ${r.id}, Time: ${r.time}, Repeat: ${r.repeat || 'none'}, Message: ${r.args?.message || '(none)'}`).join('\n');
+                const details = reminders.map(r => `- ID: ${r.id}, Time: ${r.time}, Repeat: ${r.repeat || 'none'}, Skill: ${r.skill}, Args: ${JSON.stringify(r.args || {})}`).join('\n');
                 console.log(JSON.stringify({ success: true, message: `You have ${reminders.length} active reminder(s):\n${details}`, reminders }));
             }
         } else {

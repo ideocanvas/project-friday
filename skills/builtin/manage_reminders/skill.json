@@ -19,7 +19,7 @@
     },
     "message": {
       "type": "string",
-      "description": "Required for 'create'. The message to send the user when the reminder triggers."
+      "description": "The message to send the user when the reminder triggers. Not required if 'skillName' is used."
     },
     "repeat": {
       "type": "string",
@@ -29,6 +29,14 @@
     "reminder_id": {
       "type": "string",
       "description": "Required for 'delete' and 'update'. The UUID of the reminder to modify/delete, obtained by calling 'list'."
+    },
+    "skillName": {
+      "type": "string",
+      "description": "Optional name of the skill to execute when the reminder triggers (e.g., 'voice', 'search_web'). Use 'noop' if only a text message should be sent."
+    },
+    "skillArgs": {
+      "type": "object",
+      "description": "Optional JSON object mapping arguments to pass to the skill when it triggers (e.g. {\"query\": \"news\"} for search)."
     }
   }
 }

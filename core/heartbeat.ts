@@ -64,6 +64,7 @@ interface SkillResult {
     message?: string;
     success?: boolean;
     error?: string;
+    audio_path?: string;
 }
 
 interface QueuedMessage {
@@ -74,6 +75,7 @@ interface QueuedMessage {
     timestamp: string;
     retry: number;
     status: 'pending' | 'sent' | 'failed';
+    audio_path?: string;
 }
 
 interface StatusData {
@@ -126,9 +128,14 @@ function checkReminders(): void {
                 if (now >= remTime) {
                     console.log(`⏰ Triggering reminder for ${user} at ${remTime.toISOString()}`);
                     
-                    // Send reminder notification (no skill execution in phase 1)
-                    const message = rem.args?.message || `Reminder: ${rem.skill}`;
-                    queueMessage(user, String(message));
+                    if (rem.skill && rem.skill !== 'noop') {
+                        console.log(`Executing customized skill: ${rem.skill}`);
+                        executeSkill(rem.skill, user, (rem.args as Record<string, unknown>) || {});
+                    } else {
+                        // Send simple reminder notification directly
+                        const message = rem.args?.message || `Reminder: ${rem.skill}`;
+                        queueMessage(user, String(message));
+                    }
                     
                     // Keep if recurring, remove if one-time
                     if (rem.repeat) {
@@ -246,8 +253,8 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
             if (output) {
                 try {
                     const result: SkillResult = JSON.parse(output);
-                    if (result.message) {
-                        queueMessage(userId, result.message);
+                    if (result.message || result.audio_path) {
+                        queueMessage(userId, result.message || 'Audio generated.', result.audio_path);
                     }
                 } catch {
                     queueMessage(userId, output);
@@ -285,7 +292,16 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
             if (outStream) outStream.write(chunk);
             const output = chunk.trim();
             if (output) {
-                queueMessage(userId, output);
+                try {
+                    const result: SkillResult = JSON.parse(output);
+                    if (result.message || result.audio_path) {
+                        queueMessage(userId, result.message || 'Media generated.', result.audio_path);
+                    } else {
+                        queueMessage(userId, output);
+                    }
+                } catch {
+                    queueMessage(userId, output);
+                }
             }
         });
         
@@ -312,7 +328,7 @@ function executeSkill(skillName: string, userId: string, args: Record<string, un
 /**
  * Write result to message queue for Gateway to send
  */
-function queueMessage(userId: string, content: string): void {
+function queueMessage(userId: string, content: string, audioPath?: string): void {
     const queueFile = path.join(QUEUE_PATH, 'pending_messages.json');
     
     let messages: QueuedMessage[] = [];
@@ -324,14 +340,15 @@ function queueMessage(userId: string, content: string): void {
         id: generateUUID(),
         to: userId,
         message: content,
-        type: 'text',
+        type: audioPath ? 'audio' : 'text',
         timestamp: new Date().toISOString(),
         retry: 0,
-        status: 'pending'
+        status: 'pending',
+        ...(audioPath ? { audio_path: audioPath } : {})
     });
     
     fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2));
-    console.log(`Queued message for ${userId}`);
+    console.log(`Queued ${audioPath ? 'audio ' : ''}message for ${userId}`);
 }
 
 /**
