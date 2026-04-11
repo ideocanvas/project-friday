@@ -150,7 +150,7 @@ async function checkReminders(): Promise<void> {
                     
                     // Fire and forget the LLM process, or await it
                     // Doing await inside this loop could block other reminders, better to fire alongside
-                    processWithLLM(user, messageText, { jid: `${user}@s.whatsapp.net` })
+                    processWithLLM(user, messageText, { jid: user })
                         .then(result => {
                             if (result.success && !result.backgrounded && result.response) {
                                 // Agent completed sync response, queue it to the user
