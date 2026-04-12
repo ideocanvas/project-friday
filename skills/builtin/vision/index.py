@@ -204,7 +204,7 @@ def analyze_image(image_path: str, query: str, timeout_ms: int = VISION_TIMEOUT_
                         ]
                     }
                 ],
-                "max_tokens": 2048,
+                "max_tokens": 8192,
                 "temperature": 0.3
             }
         else:
