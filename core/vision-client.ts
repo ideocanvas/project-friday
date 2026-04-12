@@ -156,7 +156,7 @@ export async function analyzeImage(
                         ]
                     }
                 ],
-                max_tokens: 2048,
+                max_tokens: 8000,
                 temperature: 0.3
             };
         } else {
@@ -306,7 +306,7 @@ export async function analyzeMultipleImages(
                 messages: [
                     { role: 'user', content: imageContents }
                 ],
-                max_tokens: 2048,
+                max_tokens: 8000,
                 temperature: 0.3
             };
         } else {
