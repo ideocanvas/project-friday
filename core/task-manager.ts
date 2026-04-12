@@ -563,6 +563,8 @@ function pushTaskResultToQueue(task: Task, message: string): void {
             }
         }
 
+        console.log(`[TaskManager] Pushing task result to queue: id=${task.id}, phone=${task.phone}, jid=${task.jid}, final_to=${task.jid || task.phone}`);
+        
         messages.push({
             id: `task_${task.id}_${Date.now()}`,
             to: task.jid || task.phone,

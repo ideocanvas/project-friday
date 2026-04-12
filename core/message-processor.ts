@@ -1025,6 +1025,7 @@ async function dispatchBackgroundTask(
     providedJid?: string,
 ): Promise<ProcessResult> {
     const jid = providedJid || phone; // Will be properly set by gateway if needed
+    console.log(`[MessageProcessor] Dispatching task with phone=${phone}, providedJid=${providedJid}, final_jid=${jid}`);
     const task = createTask({
         phone,
         jid,
