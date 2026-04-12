@@ -803,20 +803,13 @@ class WhatsAppGateway {
      * For bare phone numbers, try @lid first (often the active chat JID), then fallback to @s.whatsapp.net.
      */
     resolveRecipientJids(to: string): string[] {
-        const phone = to.split('@')[0].replace(/\D/g, '');
-        if (!phone) return [to];
-
         if (!to.includes('@')) {
+            const phone = to.replace(/\D/g, '');
+            if (!phone) return [];
             return [`${phone}@lid`, `${phone}@s.whatsapp.net`];
         }
-        
-        if (to.includes('@s.whatsapp.net')) {
-            return [`${phone}@lid`, to];
-        } else if (to.includes('@lid')) {
-            return [to, `${phone}@s.whatsapp.net`];
-        }
 
-        return [to, `${phone}@lid`, `${phone}@s.whatsapp.net`];
+        return [to];
     }
 
     /**
