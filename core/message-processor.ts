@@ -956,6 +956,19 @@ Respond with "NO" if it's a completely unrelated new task or an interruption tha
             if (triageResult.category === 'background_task') {
                 // The Agent responding to this intent will only see the summarized query, stripped of chat history
                 finalMessage = triageResult.query;
+                
+                // Preserve image attachments that triage might have stripped
+                if (message.includes('Image saved at:')) {
+                    const match = message.match(/(?:\[User sent an image.*?\]\n)?Image saved at: [^\n]+/);
+                    if (match && !finalMessage.includes('Image saved at:')) {
+                        finalMessage += `\n\n${match[0]}`;
+                    }
+                }
+                
+                if (message.startsWith('[Voice]') && !finalMessage.startsWith('[Voice]')) {
+                    finalMessage = `[Voice] ${finalMessage}`;
+                }
+                
                 finalHistory = [];
                 return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
             }
@@ -964,6 +977,19 @@ Respond with "NO" if it's a completely unrelated new task or an interruption tha
                 // For now, still dispatch as a background task with a note
                 // TODO: Integrate with evolution.ts for actual skill generation
                 finalMessage = triageResult.query;
+
+                // Preserve image attachments that triage might have stripped
+                if (message.includes('Image saved at:')) {
+                    const match = message.match(/(?:\[User sent an image.*?\]\n)?Image saved at: [^\n]+/);
+                    if (match && !finalMessage.includes('Image saved at:')) {
+                        finalMessage += `\n\n${match[0]}`;
+                    }
+                }
+
+                if (message.startsWith('[Voice]') && !finalMessage.startsWith('[Voice]')) {
+                    finalMessage = `[Voice] ${finalMessage}`;
+                }
+
                 finalHistory = [];
                 console.log('[MessageProcessor] Skill generation requested, dispatching as background task with evolution trigger');
                 return await dispatchBackgroundTask(phone, finalMessage, systemPrompt, finalHistory, options?.jid);
