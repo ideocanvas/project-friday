@@ -267,11 +267,7 @@ class DeepResearcher:
     ):
         self.query = query
         self.mode = mode
-        self.max_sources = (
-            min(max_sources, 2)
-            if mode == "quick"
-            else min(max_sources, MAX_SOURCES_DEFAULT)
-        )
+        self.max_sources = max_sources  # Remove arbitrary clamping to allow comprehensive queries
         self.findings: List[Dict[str, Any]] = []
         self.visited_urls: set = set()
         self.temp_dir: Optional[str] = None
@@ -760,17 +756,25 @@ class DeepResearcher:
                 self.findings.append(source_data)
                 self._save_source_data(1, source_data)
 
-                # Optionally follow child links if info is incomplete
+                # Optionally follow child links if info is incomplete or exhaustive search requested
+                q_lower = (query or "").lower()
+                is_exhaustive = "whole" in q_lower or "all" in q_lower or "entire" in q_lower or "every" in q_lower
+                missing = extracted.get("missing_info")
+                if is_exhaustive and not missing:
+                    missing = [query or "more information"]
+                
                 if (
-                    not extracted.get("has_answer")
-                    and extracted.get("missing_info")
+                    (not extracted.get("has_answer") or is_exhaustive)
+                    and missing
                     and page_data.get("links")
+                    and len(self.findings) < self.max_sources
                 ):
+                    max_add = max(1, self.max_sources - len(self.findings))
                     await self._follow_child_links(
                         page_data["links"],
-                        extracted["missing_info"],
+                        missing,
                         query or "main content",
-                        max_additional=2,
+                        max_additional=max_add,
                     )
 
             # Synthesize
@@ -814,13 +818,15 @@ class DeepResearcher:
         """Follow promising child links to gather missing information."""
         # Use LLM to pick the best links to follow
         links_text = "\n".join(
-            f"- [{l.get('text', 'Untitled')}]({l.get('href', '')})" for l in links[:20]
+            f"- [{l.get('text', 'Untitled')}]({l.get('href', '')})" for l in links[:100]
         )
         missing_text = ", ".join(missing_info)
 
-        prompt = f"""Given the missing information: {missing_text}
+        prompt = f"""Given the research goal: {query}
+And the missing information: {missing_text}
 
-Which of these links would most likely contain the missing info?
+Which of these links would most likely contain the missing info or help fulfill the research goal?
+Please evaluate the links based on their description/text. DO NOT follow all links blindly. Ignore navigation, irrelevant pages, or repetitive links.
 {links_text}
 
 Return a JSON array of URLs (most relevant first), max {max_additional} URLs.

@@ -175,6 +175,8 @@ async def _handle_analyze_url(params, user_id):
     """Handle analyze_url action."""
     url = params.get("url", "").strip()
     query = params.get("query", "").strip() or None
+    mode = params.get("mode", "deep")
+    max_sources = int(params.get("max_sources", 10))
 
     if not url:
         return {
@@ -184,7 +186,7 @@ async def _handle_analyze_url(params, user_id):
 
     print(f"[DeepResearch] Analyzing URL: {url}")
 
-    researcher = DeepResearcher(query or url, mode="quick")
+    researcher = DeepResearcher(query or url, mode=mode, max_sources=max_sources)
     result = await researcher.analyze_url(url, query)
 
     return result.to_dict()
