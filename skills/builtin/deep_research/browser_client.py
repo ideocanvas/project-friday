@@ -130,9 +130,11 @@ async def _ensure_browser() -> Tuple[Any, Any, Any]:
         _browser = await pw.chromium.connect_over_cdp(CDP_ENDPOINT)
         print(f"[BrowserClient] Connected to existing Chrome via CDP: {CDP_ENDPOINT}")
     except Exception as e:
-        print(f"[BrowserClient] CDP connection failed ({e}), launching Chromium...")
+        print(
+            f"[BrowserClient] CDP connection failed ({e}), launching visible Chromium..."
+        )
         _browser = await pw.chromium.launch(
-            headless=True,
+            headless=False,
             args=["--no-sandbox", "--disable-setuid-sandbox"],
         )
 

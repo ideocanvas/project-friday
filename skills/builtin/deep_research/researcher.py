@@ -51,31 +51,40 @@ REALTIME_MEMORY_MAX_AGE_HOURS = float(
     os.getenv("DEEP_RESEARCH_REALTIME_MEMORY_MAX_AGE_HOURS", "0.25")
 )
 
+
 def send_direct_message(jid: str, text: str):
     """Sends a direct message to the user asynchronously, bypassing the return loop."""
     if not FRIDAY_API_URL or not jid:
         return
     try:
-        requests.post(f"{FRIDAY_API_URL}/execute/message", json={"jid": jid, "payload": {"text": text}}, timeout=5)
+        requests.post(
+            f"{FRIDAY_API_URL}/execute/message",
+            json={"jid": jid, "payload": {"text": text}},
+            timeout=5,
+        )
     except Exception as e:
         print(f"[Warning] Failed to send direct message to {jid}: {e}", file=sys.stderr)
 
-def ask_user(jid: str, question: str, skill_name: str = "deep_research") -> Optional[str]:
+
+def ask_user(
+    jid: str, question: str, skill_name: str = "deep_research"
+) -> Optional[str]:
     """Pauses execution, asks the user directly, and block-waits for their reply via the HTTP request."""
     if not FRIDAY_API_URL or not jid:
         return None
     try:
-        resp = requests.post(f"{FRIDAY_API_URL}/execute/ask", json={
-            "jid": jid,
-            "skillName": skill_name,
-            "question": question
-        }, timeout=86400) # Long timeout (24h)
+        resp = requests.post(
+            f"{FRIDAY_API_URL}/execute/ask",
+            json={"jid": jid, "skillName": skill_name, "question": question},
+            timeout=86400,
+        )  # Long timeout (24h)
         data = resp.json()
         if data.get("success"):
             return data.get("answer")
     except Exception as e:
         print(f"[Warning] Failed to ask user directly {jid}: {e}", file=sys.stderr)
     return None
+
 
 BUILTIN_MIN_SCORE = float(os.getenv("DEEP_RESEARCH_BUILTIN_MIN_SCORE", "0.45"))
 USER_MEMORY_MIN_SUMMARY_LEN = int(
@@ -267,7 +276,9 @@ class DeepResearcher:
     ):
         self.query = query
         self.mode = mode
-        self.max_sources = max_sources  # Remove arbitrary clamping to allow comprehensive queries
+        self.max_sources = (
+            max_sources  # Remove arbitrary clamping to allow comprehensive queries
+        )
         self.findings: List[Dict[str, Any]] = []
         self.visited_urls: set = set()
         self.temp_dir: Optional[str] = None
@@ -294,9 +305,9 @@ class DeepResearcher:
         return "en"
 
     def _all_keywords(self, kind: str) -> List[str]:
-        return LANGUAGE_HINTS.get(self.query_language, {}).get(kind, []) + LANGUAGE_HINTS[
-            "en"
-        ].get(kind, [])
+        return LANGUAGE_HINTS.get(self.query_language, {}).get(
+            kind, []
+        ) + LANGUAGE_HINTS["en"].get(kind, [])
 
     def _is_news_query(self, query: str) -> bool:
         q = self._normalize_text(query)
@@ -425,7 +436,9 @@ class DeepResearcher:
                         pass
 
                 i18n_keywords = data.get("keywords_i18n", {})
-                keywords = i18n_keywords.get(self.query_language, data.get("keywords", []))
+                keywords = i18n_keywords.get(
+                    self.query_language, data.get("keywords", [])
+                )
                 score += 0.25 * self._keyword_score(self.query, keywords)
                 score += float(data.get("priority", 0.0))
 
@@ -690,7 +703,7 @@ class DeepResearcher:
 
         finally:
             # Cleanup
-            await close_browser()
+            # await close_browser()  # Keep browser open for reuse
             result.duration_ms = int((time.time() - start_time) * 1000)
 
             # Cleanup temp dir if no page was generated
@@ -758,11 +771,16 @@ class DeepResearcher:
 
                 # Optionally follow child links if info is incomplete or exhaustive search requested
                 q_lower = (query or "").lower()
-                is_exhaustive = "whole" in q_lower or "all" in q_lower or "entire" in q_lower or "every" in q_lower
+                is_exhaustive = (
+                    "whole" in q_lower
+                    or "all" in q_lower
+                    or "entire" in q_lower
+                    or "every" in q_lower
+                )
                 missing = extracted.get("missing_info")
                 if is_exhaustive and not missing:
                     missing = [query or "more information"]
-                
+
                 if (
                     (not extracted.get("has_answer") or is_exhaustive)
                     and missing
@@ -801,7 +819,7 @@ class DeepResearcher:
             result.errors.append(str(e))
 
         finally:
-            await close_browser()
+            # await close_browser()  # Keep browser open for reuse
             result.duration_ms = int((time.time() - start_time) * 1000)
             if not result.page_path:
                 self._cleanup_temp_dir()

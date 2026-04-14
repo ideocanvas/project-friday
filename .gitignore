@@ -96,3 +96,6 @@ plans/ref/
 
 # Plans reference
 plans/ref/
+
+skills/builtin/browser/chrome-profile
+scripts/skills/builtin/browser/chrome-profile
