@@ -15,7 +15,9 @@ const __dirname = path.dirname(__filename);
 
 // Configuration
 const WEB_PORTAL_ROOT = process.env.WEB_PORTAL_ROOT || './web_portal';
+const TEMP_MEDIA_PATH = process.env.TEMP_MEDIA_PATH || './temp/media';
 const PAGE_EXPIRY_HOURS = parseInt(process.env.PAGE_EXPIRY_HOURS || '24', 10);
+const MEDIA_EXPIRY_HOURS = parseInt(process.env.MEDIA_EXPIRY_HOURS || '72', 10); // Default 3 days
 const CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
 
 // Type definitions
@@ -83,7 +85,60 @@ function cleanup(): void {
     }
     
     console.log(`🧹 Janitor complete - deleted ${deletedCount} expired pages`);
+    cleanupMedia();
     updateStatus(deletedCount);
+}
+
+/**
+ * Clean up expired media files
+ */
+function cleanupMedia(): void {
+    console.log('🧹 Janitor running - checking for expired media files...');
+    
+    if (!fs.existsSync(TEMP_MEDIA_PATH)) {
+        return;
+    }
+    
+    const files = fs.readdirSync(TEMP_MEDIA_PATH);
+    const now = Date.now();
+    const expiryMs = MEDIA_EXPIRY_HOURS * 60 * 60 * 1000;
+    let deletedCount = 0;
+    
+    for (const file of files) {
+        const filePath = path.join(TEMP_MEDIA_PATH, file);
+        
+        try {
+            const stats = fs.statSync(filePath);
+            if (stats.isDirectory()) {
+                // Also clean up subdirectories like wa-audio
+                const subFiles = fs.readdirSync(filePath);
+                for (const subFile of subFiles) {
+                    const subFilePath = path.join(filePath, subFile);
+                    const subStats = fs.statSync(subFilePath);
+                    const age = now - subStats.birthtimeMs;
+                    if (age > expiryMs) {
+                        fs.unlinkSync(subFilePath);
+                        console.log(`Deleted expired media: ${subFilePath}`);
+                        deletedCount++;
+                    }
+                }
+                continue;
+            }
+
+            const age = now - stats.birthtimeMs;
+            
+            if (age > expiryMs) {
+                fs.unlinkSync(filePath);
+                console.log(`Deleted expired media: ${file}`);
+                deletedCount++;
+            }
+        } catch (e) {
+            const error = e as Error;
+            console.error(`Error checking ${filePath}:`, error.message);
+        }
+    }
+    
+    console.log(`🧹 Media Janitor complete - deleted ${deletedCount} expired files`);
 }
 
 /**

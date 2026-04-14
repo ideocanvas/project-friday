@@ -23,7 +23,7 @@ VERSION = "1.1.0"
 # Environment variables
 VISION_MODEL = os.environ.get("VISION_MODEL", "llava:13b")
 VISION_BASE_URL = os.environ.get("VISION_BASE_URL", "http://localhost:11434")
-VISION_TIMEOUT_MS = int(os.environ.get("VISION_TIMEOUT_MS", "60000"))
+VISION_TIMEOUT_MS = int(os.environ.get("VISION_TIMEOUT_MS", "300000"))
 # API type: "ollama" or "openai" (OpenAI-compatible, e.g. LM Studio)
 VISION_API_TYPE = os.environ.get("VISION_API_TYPE", "ollama").lower().strip()
 _IS_OPENAI = VISION_API_TYPE in ["openai", "lmstudio", "vllm"]

@@ -39,7 +39,7 @@ const ALLOWED_NUMBERS: string[] = (process.env.ALILED_NUMBERS || '').split(',').
 const USER_DATA_ROOT = process.env.USER_DATA_ROOT || './users';
 const QUEUE_PATH = process.env.QUEUE_PATH || './queue';
 const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
-const TEMP_MEDIA_PATH = process.env.TEMP_MEDIA_PATH || '/tmp/friday/media';
+const TEMP_MEDIA_PATH = process.env.TEMP_MEDIA_PATH || './temp/media';
 
 // Logger
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -527,7 +527,7 @@ class WhatsAppGateway {
             
             if (result.success) {
                 // Save the caption/image reference to memory after processing
-                this.appendMemory(jid, 'user', caption || '[Image]');
+                this.appendMemory(jid, 'user', userMessage);
                 if (result.response) {
                     this.appendMemory(jid, 'assistant', result.response);
                 }
