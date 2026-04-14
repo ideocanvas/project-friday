@@ -37,7 +37,7 @@ export interface TriageResult {
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
-const TRIAGE_MAX_TOKENS = parseInt(process.env.TRIAGE_MAX_TOKENS || '256', 10);
+const TRIAGE_MAX_TOKENS = parseInt(process.env.TRIAGE_MAX_TOKENS || '1024', 10);
 const TRIAGE_TEMPERATURE = parseFloat(process.env.TRIAGE_TEMPERATURE || '0.3');
 const TRIAGE_TIMEOUT_MS = parseInt(process.env.TRIAGE_TIMEOUT_MS || '15000', 10);
 
