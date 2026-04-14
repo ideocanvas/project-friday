@@ -15,7 +15,7 @@ const VISION_BASE_URL = process.env.VISION_BASE_URL || process.env.OLLAMA_BASE_U
 const VISION_ENABLED = VISION_MODEL.length > 0;
 // API type: "ollama" or "openai" (OpenAI-compatible, e.g. LM Studio)
 const VISION_API_TYPE = (process.env.VISION_API_TYPE || 'ollama').toLowerCase().trim();
-const IS_OPENAI = VISION_API_TYPE === 'openai';
+const IS_OPENAI = ['openai', 'lmstudio', 'vllm'].includes(VISION_API_TYPE);
 
 /**
  * Build the full API URL based on VISION_API_TYPE.
