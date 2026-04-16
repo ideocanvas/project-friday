@@ -106,7 +106,7 @@ def extract_info_prompt(
 
     focus_text = "\n".join(f"- {f}" for f in focus_areas)
 
-    return f"""Extract information relevant to the research query from this web page.
+    return f"""Extract information relevant to the research query from this web page content.
 
 QUERY: {query}
 
@@ -115,7 +115,7 @@ PAGE TITLE: {page_title}
 FOCUS AREAS:
 {focus_text}
 
-PAGE CONTENT:
+PAGE CONTENT (Markdown format):
 {page_text}
 
 Return a JSON object with:

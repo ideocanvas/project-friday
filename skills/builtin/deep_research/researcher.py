@@ -624,7 +624,7 @@ class DeepResearcher:
                     self.visited_urls.add(url)
 
                     # Step 2d: Browse and extract
-                    page_data = await browse_url(url)
+                    page_data = await browse_url(url, temp_dir=self.temp_dir)
                     if not page_data.get("success"):
                         self.errors.append(
                             f"Failed to browse {url}: {page_data.get('error', 'Unknown')}"
@@ -632,12 +632,7 @@ class DeepResearcher:
                         continue
 
                     # Step 2e: Extract relevant info via LLM
-                    extracted = self._extract_info(
-                        page_data.get("title", title),
-                        page_data.get("text", ""),
-                        page_data.get("url", url),
-                        focus_areas,
-                    )
+                    extracted = self._extract_info(page_data, focus_areas)
 
                     if extracted:
                         source_data = {
@@ -735,7 +730,7 @@ class DeepResearcher:
 
             # Browse the URL
             print(f"[Researcher] Analyzing URL: {url}")
-            page_data = await browse_url(url)
+            page_data = await browse_url(url, temp_dir=self.temp_dir)
 
             if not page_data.get("success"):
                 return self._error_result(
@@ -748,12 +743,7 @@ class DeepResearcher:
                 if query
                 else ["main content", "key points", "important information"]
             )
-            extracted = self._extract_info(
-                page_data.get("title", ""),
-                page_data.get("text", ""),
-                page_data.get("url", url),
-                focus_areas,
-            )
+            extracted = self._extract_info(page_data, focus_areas)
 
             if extracted:
                 source_data = {
@@ -877,16 +867,11 @@ Return ONLY the JSON array."""
             print(f"[Researcher] Following child link: {url}")
             self.visited_urls.add(url)
 
-            page_data = await browse_url(url)
+            page_data = await browse_url(url, temp_dir=self.temp_dir)
             if not page_data.get("success"):
                 continue
 
-            extracted = self._extract_info(
-                page_data.get("title", ""),
-                page_data.get("text", ""),
-                page_data.get("url", url),
-                missing_info,
-            )
+            extracted = self._extract_info(page_data, missing_info)
 
             if extracted:
                 source_data = {
@@ -931,19 +916,143 @@ Return ONLY the JSON array."""
         return []
 
     def _extract_info(
-        self, page_title: str, page_text: str, url: str, focus_areas: List[str]
+        self, page_data: Dict[str, Any], focus_areas: List[str]
     ) -> Optional[Dict[str, Any]]:
-        """Use LLM to extract relevant information from a page."""
-        if not page_text or len(page_text.strip()) < 50:
-            print(f"[Researcher] Page has too little text, skipping: {url}")
+        """Use LLM or vision to extract relevant information from a page."""
+        url = page_data.get("url", "")
+        page_title = page_data.get("title", "")
+
+        # Check for vision support
+        use_vision = os.getenv("DEEP_RESEARCH_USE_VISION", "false").lower() == "true"
+        vision_available = False
+        if use_vision:
+            try:
+                from skills.builtin.vision.index import check_vision_available
+
+                vision_status = check_vision_available()
+                vision_available = vision_status.get("available", False)
+            except Exception as e:
+                print(f"[Researcher] Vision check failed: {e}")
+                vision_available = False
+
+        if (
+            vision_available
+            and page_data.get("screenshot_path")
+            and os.path.exists(page_data["screenshot_path"])
+        ):
+            # Use vision for extraction
+            print(f"[Researcher] Using vision analysis for: {url}")
+            extracted = self._extract_info_vision(page_data, focus_areas)
+        else:
+            # Use text/markdown extraction
+            extracted = self._extract_info_text(page_data, focus_areas)
+
+        return extracted
+
+    def _extract_info_vision(
+        self, page_data: Dict[str, Any], focus_areas: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Extract info using vision model."""
+        try:
+            from skills.builtin.vision.index import analyze_image
+
+            screenshot_path = page_data["screenshot_path"]
+            query = f"""Extract and analyze relevant information from this webpage screenshot that helps answer the research query: "{self.query}"
+
+Focus areas to consider: {", ".join(focus_areas)}
+
+Please provide:
+- Key facts and data visible in the screenshot
+- Main content relevant to the query
+- Important details, numbers, dates, or quotes
+- Any tables, charts, or structured data
+
+Ignore navigation menus, ads, footers, and irrelevant UI elements."""
+
+            vision_result = analyze_image(
+                screenshot_path, query, timeout_ms=60000
+            )  # 60 second timeout
+            if vision_result.get("success"):
+                # Parse vision response into expected JSON format
+                vision_analysis = vision_result["data"]["analysis"]
+                return self._parse_vision_response(
+                    vision_analysis, page_data, focus_areas
+                )
+            else:
+                print(
+                    f"[Researcher] Vision analysis failed: {vision_result.get('message')}"
+                )
+                # Fallback to text extraction
+                return self._extract_info_text(page_data, focus_areas)
+        except Exception as e:
+            print(f"[Researcher] Vision extraction failed: {e}")
+            return self._extract_info_text(page_data, focus_areas)
+
+    def _extract_info_text(
+        self, page_data: Dict[str, Any], focus_areas: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Extract info using structured text (not raw markdown)."""
+        url = page_data.get("url", "")
+        page_title = page_data.get("title", "")
+
+        # Prefer the smart-extracted text over markdown.
+        # markdown starts with the full page HTML converted, which often
+        # begins with navigation/error chrome; the JS-extracted text is
+        # already narrowed to the main content area.
+        content = page_data.get("text", "") or page_data.get("markdown", "")
+        if not content or len(content.strip()) < 50:
+            print(f"[Researcher] Page has too little content, skipping: {url}")
             return None
 
-        prompt = extract_info_prompt(self.query, page_title, page_text, focus_areas)
+        prompt = extract_info_prompt(self.query, page_title, content, focus_areas)
         return call_llm_json(
             prompt,
             system_msg="You are a research information extraction assistant.",
             temperature=0.2,
             max_tokens=1024,
+        )
+
+    def _parse_vision_response(
+        self, vision_analysis: str, page_data: Dict[str, Any], focus_areas: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Parse free-form vision response into structured JSON."""
+        url = page_data.get("url", "")
+        page_title = page_data.get("title", "")
+
+        # Use LLM to structure the vision response
+        struct_prompt = f"""Convert this vision analysis of a webpage into structured JSON format.
+
+VISION ANALYSIS:
+{vision_analysis}
+
+RESEARCH QUERY: {self.query}
+PAGE TITLE: {page_title}
+URL: {url}
+FOCUS AREAS: {", ".join(focus_areas)}
+
+Return JSON with EXACTLY these fields:
+{{
+    "relevant_info": "concise summary of key information found (2-3 sentences)",
+    "key_facts": ["fact1", "fact2", "fact3", ...],
+    "source_quality": "high" or "medium" or "low",
+    "has_answer": true/false,
+    "missing_info": ["what's still missing", "another gap", ...],
+    "suggested_followup": "suggested search term or null"
+}}
+
+Guidelines:
+- relevant_info should directly address the query
+- key_facts should be specific, verifiable facts
+- has_answer should be true if the page contains useful information for the query
+- missing_info should list what's not covered or unclear
+
+Return ONLY the JSON object, no other text."""
+
+        return call_llm_json(
+            struct_prompt,
+            system_msg="You are a research data structuring assistant.",
+            temperature=0.1,
+            max_tokens=800,
         )
 
     def _evaluate_sufficiency(self, iteration: int) -> Optional[Dict[str, Any]]:
