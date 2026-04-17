@@ -15,28 +15,39 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration — all driven by environment variables
-LLM_MODEL = os.getenv('DEEP_RESEARCH_LLM_MODEL', os.getenv('CHAT_MODEL', 'qwen/qwen3.5-35b-a3b'))
-LLM_BASE_URL = os.getenv('DEEP_RESEARCH_LLM_BASE_URL', os.getenv('AI_BASE_URL', 'http://localhost:1234/v1'))
-LLM_API_TYPE = os.getenv('DEEP_RESEARCH_LLM_API_TYPE', 'openai').lower().strip()  # "openai" or "ollama"
-LLM_API_KEY = os.getenv('DEEP_RESEARCH_LLM_API_KEY', os.getenv('CLOUD_AI_KEY', ''))
-LLM_TIMEOUT = int(os.getenv('DEEP_RESEARCH_LLM_TIMEOUT_MS', '120000')) // 1000  # Convert to seconds
+LLM_MODEL = os.getenv(
+    "DEEP_RESEARCH_LLM_MODEL", os.getenv("CHAT_MODEL", "qwen/qwen3.5-35b-a3b")
+)
+LLM_BASE_URL = os.getenv(
+    "DEEP_RESEARCH_LLM_BASE_URL", os.getenv("AI_BASE_URL", "http://localhost:1234/v1")
+)
+LLM_API_TYPE = (
+    os.getenv("DEEP_RESEARCH_LLM_API_TYPE", "openai").lower().strip()
+)  # "openai" or "ollama"
+LLM_API_KEY = os.getenv("DEEP_RESEARCH_LLM_API_KEY", os.getenv("CLOUD_AI_KEY", ""))
+LLM_TIMEOUT = (
+    int(os.getenv("DEEP_RESEARCH_LLM_TIMEOUT_MS", "120000")) // 1000
+)  # Convert to seconds
 
 
 def get_config() -> Dict[str, Any]:
     """Get current LLM configuration."""
     return {
-        'model': LLM_MODEL,
-        'base_url': LLM_BASE_URL,
-        'api_type': LLM_API_TYPE,
-        'has_api_key': bool(LLM_API_KEY),
-        'timeout_s': LLM_TIMEOUT,
+        "model": LLM_MODEL,
+        "base_url": LLM_BASE_URL,
+        "api_type": LLM_API_TYPE,
+        "has_api_key": bool(LLM_API_KEY),
+        "timeout_s": LLM_TIMEOUT,
     }
 
 
-def call_llm(prompt: str, system_msg: str = "You are a helpful research assistant.",
-             temperature: float = 0.7,
-             max_tokens: int = 2048,
-             timeout: Optional[int] = None) -> str:
+def call_llm(
+    prompt: str,
+    system_msg: str = "You are a helpful research assistant.",
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+    timeout: Optional[int] = None,
+) -> str:
     """
     Call the configured LLM with a prompt.
 
@@ -55,38 +66,39 @@ def call_llm(prompt: str, system_msg: str = "You are a helpful research assistan
     """
     timeout = timeout or LLM_TIMEOUT
 
-    if LLM_API_TYPE == 'ollama':
+    if LLM_API_TYPE == "ollama":
         return _call_ollama(prompt, system_msg, temperature, timeout)
     else:
         return _call_openai(prompt, system_msg, temperature, max_tokens, timeout)
 
 
-def _call_openai(prompt: str, system_msg: str, temperature: float,
-                 max_tokens: int, timeout: int) -> str:
+def _call_openai(
+    prompt: str, system_msg: str, temperature: float, max_tokens: int, timeout: int
+) -> str:
     """Call an OpenAI-compatible API."""
-    headers = {'Content-Type': 'application/json'}
+    headers = {"Content-Type": "application/json"}
     if LLM_API_KEY:
-        headers['Authorization'] = f'Bearer {LLM_API_KEY}'
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
 
     payload = {
-        'model': LLM_MODEL,
-        'messages': [
-            {'role': 'system', 'content': system_msg},
-            {'role': 'user', 'content': prompt},
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
         ],
-        'temperature': temperature,
-        'max_tokens': max_tokens,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
 
-    url = LLM_BASE_URL.rstrip('/')
-    if not url.endswith('/chat/completions'):
+    url = LLM_BASE_URL.rstrip("/")
+    if not url.endswith("/chat/completions"):
         url = f"{url}/chat/completions"
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        return data['choices'][0]['message']['content']
+        return data["choices"][0]["message"]["content"]
     except requests.exceptions.Timeout:
         return "Error: LLM request timed out."
     except requests.exceptions.RequestException as e:
@@ -95,23 +107,22 @@ def _call_openai(prompt: str, system_msg: str, temperature: float,
         return f"Error parsing LLM response: {str(e)}"
 
 
-def _call_ollama(prompt: str, system_msg: str, temperature: float,
-                 timeout: int) -> str:
+def _call_ollama(prompt: str, system_msg: str, temperature: float, timeout: int) -> str:
     """Call an Ollama API."""
     payload = {
-        'model': LLM_MODEL,
-        'messages': [
-            {'role': 'system', 'content': system_msg},
-            {'role': 'user', 'content': prompt},
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
         ],
-        'stream': False,
-        'options': {
-            'temperature': temperature,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
         },
     }
 
-    url = LLM_BASE_URL.rstrip('/')
-    if url.endswith('/v1'):
+    url = LLM_BASE_URL.rstrip("/")
+    if url.endswith("/v1"):
         url = url[:-3]
     url = f"{url}/api/chat"
 
@@ -119,7 +130,7 @@ def _call_ollama(prompt: str, system_msg: str, temperature: float,
         response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        return data.get('message', {}).get('content', '') or data.get('response', '')
+        return data.get("message", {}).get("content", "") or data.get("response", "")
     except requests.exceptions.Timeout:
         return "Error: LLM request timed out."
     except requests.exceptions.RequestException as e:
@@ -128,10 +139,13 @@ def _call_ollama(prompt: str, system_msg: str, temperature: float,
         return f"Error parsing LLM response: {str(e)}"
 
 
-def call_llm_json(prompt: str, system_msg: str = "You are a helpful research assistant.",
-                  temperature: float = 0.3,
-                  max_tokens: int = 2048,
-                  timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def call_llm_json(
+    prompt: str,
+    system_msg: str = "You are a helpful research assistant.",
+    temperature: float = 0.3,
+    max_tokens: int = 2048,
+    timeout: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Call LLM and parse the response as JSON.
 
@@ -154,7 +168,8 @@ def call_llm_json(prompt: str, system_msg: str = "You are a helpful research ass
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     """
     Extract JSON from LLM response text.
-    Handles: pure JSON, markdown code blocks, mixed text with JSON.
+    Handles: pure JSON, markdown code blocks, mixed text with JSON,
+    and truncated/incomplete JSON.
     """
     text = text.strip()
 
@@ -166,21 +181,209 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 
     # Try extracting from markdown code block
     import re
-    json_block = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+
+    json_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if json_block:
         try:
             return json.loads(json_block.group(1).strip())
         except json.JSONDecodeError:
-            pass
+            # Try to fix truncated JSON inside code block
+            result = _try_fix_truncated_json(json_block.group(1).strip())
+            if result is not None:
+                return result
+
+    # Handle truncated markdown code block (no closing ```)
+    truncated_block = re.search(r"```(?:json)?\s*\n?(.*)", text, re.DOTALL)
+    if truncated_block:
+        candidate = truncated_block.group(1).strip()
+        # Remove trailing ``` if partial
+        candidate = re.sub(r"`+$", "", candidate).strip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            result = _try_fix_truncated_json(candidate)
+            if result is not None:
+                return result
 
     # Try finding JSON object in text
-    brace_start = text.find('{')
-    brace_end = text.rfind('}')
+    brace_start = text.find("{")
+    brace_end = text.rfind("}")
     if brace_start != -1 and brace_end > brace_start:
         try:
-            return json.loads(text[brace_start:brace_end + 1])
+            return json.loads(text[brace_start : brace_end + 1])
         except json.JSONDecodeError:
-            pass
+            # Try to fix truncated JSON object
+            result = _try_fix_truncated_json(text[brace_start:])
+            if result is not None:
+                return result
+
+    # Last resort: find opening brace and try to parse everything after
+    if brace_start != -1:
+        result = _try_fix_truncated_json(text[brace_start:])
+        if result is not None:
+            return result
 
     print(f"[LLMClient] Failed to extract JSON from response: {text[:200]}...")
     return None
+
+
+def _close_truncated_strings(text: str) -> str:
+    """
+    If JSON text is truncated inside a string value, close the string.
+    E.g. {"key": "partial string -> {"key": "partial string"
+    """
+    # Walk through tracking string state
+    in_string = False
+    escape_next = False
+    last_quote_pos = -1
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            if in_string:
+                in_string = False
+            else:
+                in_string = True
+                last_quote_pos = i
+
+    # If still inside a string at end of text, close it
+    if in_string and last_quote_pos >= 0:
+        return text + '"'
+
+    return text
+
+
+def _try_fix_truncated_json(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Try to fix truncated/incomplete JSON by closing open structures.
+    Handles responses cut off by max_tokens.
+    """
+    text = text.strip()
+
+    # Remove any trailing partial content after last complete value
+    # Strategy: progressively close open brackets and try to parse
+
+    # Count open brackets
+    open_braces = 0
+    open_brackets = 0
+    in_string = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            open_braces += 1
+        elif ch == "}":
+            open_braces -= 1
+        elif ch == "[":
+            open_brackets += 1
+        elif ch == "]":
+            open_brackets -= 1
+
+    if open_braces == 0 and open_brackets == 0:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+    # Pre-process: if truncated mid-string, close the string
+    # Find unclosed quotes and truncate after the last complete string
+    import re
+
+    # Check if we're inside a string (odd number of unescaped quotes)
+    preprocessed = _close_truncated_strings(text)
+    if preprocessed != text:
+        for close_str in _generate_closing_brackets(preprocessed):
+            try:
+                result = json.loads(preprocessed + close_str)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                continue
+
+    # Find the last complete key-value pair boundary.
+    comma_positions = []
+    for m in re.finditer(r",\s*$", text, re.MULTILINE):
+        comma_positions.append(m.start())
+    for m in re.finditer(r',\s*\n?\s*"', text):
+        # Comma followed by a new key (opening quote)
+        comma_positions.append(m.end() - 1)  # cut at comma
+
+    # Also try cutting at closing braces/brackets
+    for m in re.finditer(r"[}\]]\s*,?\s*$", text):
+        comma_positions.append(m.end())
+
+    # Also try positions after complete string values
+    for m in re.finditer(r':\s*"[^"]*"', text):
+        comma_positions.append(m.end())
+    for m in re.finditer(r":\s*(?:\d+\.?\d*|true|false|null)\s*[,\n]", text):
+        comma_positions.append(m.end() - 1)
+
+    # Deduplicate and sort descending (try longest first)
+    seen = set()
+    unique_positions = []
+    for p in comma_positions:
+        if p not in seen:
+            seen.add(p)
+            unique_positions.append(p)
+    unique_positions.sort(reverse=True)
+
+    for cp in unique_positions:
+        chunk = text[:cp].rstrip(",").rstrip()
+        for close_str in _generate_closing_brackets(chunk):
+            try:
+                result = json.loads(chunk + close_str)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                continue
+
+    # Last resort: try to find the first { and progressively close
+    brace_start = text.find("{")
+    if brace_start >= 0:
+        chunk = text[brace_start:]
+        for close_str in _generate_closing_brackets(chunk):
+            try:
+                return json.loads(chunk + close_str)
+            except json.JSONDecodeError:
+                continue
+
+    return None
+
+
+def _generate_closing_brackets(text: str) -> List[str]:
+    """Generate possible closing bracket combinations for partial JSON."""
+    # Simple heuristic: try common closing patterns
+    closers = [
+        "}",
+        "}}",
+        "]}}",
+        "}}}",
+        "]}}}",
+        "]}}}}",
+    ]
+    # Also try with ] first (for arrays)
+    closers.extend(
+        [
+            "]",
+            "]}",
+            "]}}",
+            "]}}}",
+        ]
+    )
+    return closers

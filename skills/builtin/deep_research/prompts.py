@@ -100,7 +100,7 @@ def extract_info_prompt(
         Formatted prompt string
     """
     # Truncate page text to avoid exceeding context limits
-    max_text = 4000
+    max_text = 6000
     if len(page_text) > max_text:
         page_text = page_text[:max_text] + "\n\n[... content truncated]"
 

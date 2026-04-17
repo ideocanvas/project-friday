@@ -894,7 +894,7 @@ Return ONLY the JSON array."""
             prompt,
             system_msg="You are a research planning assistant.",
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=1024,
         )
         if result and self._is_news_query(self.query):
             result["search_type"] = "news"
@@ -927,9 +927,16 @@ Return ONLY the JSON array."""
         vision_available = False
         if use_vision:
             try:
-                from skills.builtin.vision.index import check_vision_available
+                import importlib
 
-                vision_status = check_vision_available()
+                vision_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "..", "vision"
+                )
+                vision_dir = os.path.normpath(vision_dir)
+                if vision_dir not in sys.path:
+                    sys.path.insert(0, vision_dir)
+                vision_mod = importlib.import_module("index")
+                vision_status = vision_mod.check_vision_available()
                 vision_available = vision_status.get("available", False)
             except Exception as e:
                 print(f"[Researcher] Vision check failed: {e}")
@@ -954,7 +961,15 @@ Return ONLY the JSON array."""
     ) -> Optional[Dict[str, Any]]:
         """Extract info using vision model."""
         try:
-            from skills.builtin.vision.index import analyze_image
+            import importlib
+
+            vision_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "..", "vision"
+            )
+            vision_dir = os.path.normpath(vision_dir)
+            if vision_dir not in sys.path:
+                sys.path.insert(0, vision_dir)
+            vision_mod = importlib.import_module("index")
 
             screenshot_path = page_data["screenshot_path"]
             query = f"""Extract and analyze relevant information from this webpage screenshot that helps answer the research query: "{self.query}"
@@ -969,7 +984,7 @@ Please provide:
 
 Ignore navigation menus, ads, footers, and irrelevant UI elements."""
 
-            vision_result = analyze_image(
+            vision_result = vision_mod.analyze_image(
                 screenshot_path, query, timeout_ms=60000
             )  # 60 second timeout
             if vision_result.get("success"):
@@ -1009,7 +1024,7 @@ Ignore navigation menus, ads, footers, and irrelevant UI elements."""
             prompt,
             system_msg="You are a research information extraction assistant.",
             temperature=0.2,
-            max_tokens=1024,
+            max_tokens=2048,
         )
 
     def _parse_vision_response(
