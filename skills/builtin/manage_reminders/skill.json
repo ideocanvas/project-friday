@@ -2,41 +2,33 @@
   "id": "manage_reminders",
   "name": "manage_reminders",
   "enabled": true,
-  "description": "Create, list, update, or delete reminders for the user. Use this when the user asks to set a reminder (e.g., 'remind me to check the news at 9am daily'), view their reminders, update an existing reminder, or cancel a reminder.",
+  "description": "Create, list, update, or delete reminders. When a reminder fires, the user's message is replayed to the AI assistant, which handles it like a normal request (calling skills, using voice, etc. as needed).",
   "file": "index.js",
   "type": "builtin",
-  "prompt": "Example to create: {\"action\": \"create\", \"time\": \"2026-04-09T09:00:00Z\", \"message\": \"Read news\", \"repeat\": \"daily\"}",
+  "prompt": "## How to use\n\n### Create:\n{\"action\": \"create\", \"time\": \"2026-04-09T09:00:00Z\", \"message\": \"查看今天的香港头条新闻，用语音播报\", \"repeat\": \"daily\"}\n\nThe `message` is the exact instruction the user wants replayed at the scheduled time. Include ALL details in the message — language preference, voice requests, research topics, etc. The AI will handle it naturally when the reminder fires.\n\n### Update (need reminder_id from list):\n{\"action\": \"update\", \"reminder_id\": \"<UUID>\", \"message\": \"最新的香港新闻，用广东话语音播报\"}\n{\"action\": \"update\", \"reminder_id\": \"<UUID>\", \"time\": \"2026-04-10T08:00:00Z\"}\n{\"action\": \"update\", \"reminder_id\": \"<UUID>\", \"repeat\": \"weekly\"}\n\n### Delete:\n{\"action\": \"delete\", \"reminder_id\": \"<UUID>\"}\n\n### List:\n{\"action\": \"list\"}\n\nALWAYS call 'list' first to get the reminder_id before updating or deleting.",
   "parameters": {
     "action": {
       "type": "string",
       "required": true,
       "enum": ["create", "list", "update", "delete"],
-      "description": "The action to perform: 'create' to add a reminder, 'list' to view all, 'update' to modify, or 'delete' to remove one."
+      "description": "The action to perform."
     },
     "time": {
       "type": "string",
-      "description": "Required for 'create'. ISO 8601 formatted datetime string for when the reminder triggers (e.g. 2026-04-09T09:00:00Z). Must be in the future."
+      "description": "For 'create' (required) or 'update': ISO 8601 datetime for when the reminder fires (e.g. 2026-04-09T09:00:00Z)."
     },
     "message": {
       "type": "string",
-      "description": "The message to send the user when the reminder triggers. Not required if 'skillName' is used."
+      "description": "For 'create' (required) or 'update': the complete instruction to replay at the scheduled time. Include everything — language, voice, topic, format. E.g. '查看今天的香港头条新闻，用语音播报'"
     },
     "repeat": {
       "type": "string",
       "enum": ["daily", "weekly", "monthly"],
-      "description": "Optional recurrence pattern for 'create' or 'update'. Omit for one-time reminders."
+      "description": "Recurrence pattern. Omit for one-time reminders."
     },
     "reminder_id": {
       "type": "string",
-      "description": "Required for 'delete' and 'update'. The UUID of the reminder to modify/delete, obtained by calling 'list'."
-    },
-    "skillName": {
-      "type": "string",
-      "description": "Optional name of the skill to execute when the reminder triggers (e.g., 'voice', 'search_web'). Use 'noop' if only a text message should be sent."
-    },
-    "skillArgs": {
-      "type": "object",
-      "description": "Optional JSON object mapping arguments to pass to the skill when it triggers (e.g. {\"query\": \"news\"} for search)."
+      "description": "Required for 'update' and 'delete'. Obtain by calling 'list' first."
     }
   }
 }

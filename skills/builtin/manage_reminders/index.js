@@ -1,5 +1,13 @@
 /**
- * Built-in skill to create, list, and delete user reminders
+ * Built-in skill to create, list, update, and delete user reminders.
+ * 
+ * Each reminder stores:
+ * - time: when to trigger (ISO 8601)
+ * - message: the user's instruction to replay at the scheduled time
+ * - repeat: recurrence pattern (daily/weekly/monthly or null for one-time)
+ * 
+ * When a reminder fires, the raw `message` is replayed to the agent loop,
+ * which decides what skills to call, whether to use voice, etc.
  */
 import fs from 'fs';
 import path from 'path';
@@ -40,12 +48,10 @@ async function main() {
     const reminderPath = path.join(userDir, 'reminders.json');
 
     try {
-        // Ensure user directory exists
         if (!fs.existsSync(userDir)) {
             fs.mkdirSync(userDir, { recursive: true });
         }
 
-        // Load existing reminders
         let reminders = [];
         if (fs.existsSync(reminderPath)) {
             const data = fs.readFileSync(reminderPath, 'utf8');
@@ -55,30 +61,25 @@ async function main() {
         }
 
         if (action === 'create') {
-            if (!params.time || (!params.message && !params.skillName)) {
-                console.log(JSON.stringify({ success: false, error: 'Missing required parameters for create: time, and either message or skillName' }));
+            if (!params.time || !params.message) {
+                console.log(JSON.stringify({ success: false, error: 'Missing required parameters for create: time and message' }));
                 process.exit(0);
             }
 
-            // Create new reminder object
             const newReminder = {
                 id: randomUUID(),
                 time: params.time,
-                skill: params.skillName || 'noop', // Execute the given skill, or standard text
-                args: params.skillArgs || {
-                    message: params.message
-                },
+                message: params.message,
                 repeat: params.repeat || null,
                 created_at: new Date().toISOString()
             };
 
-            // Add to list and save
             reminders.push(newReminder);
             fs.writeFileSync(reminderPath, JSON.stringify(reminders, null, 2));
 
             const response = {
                 success: true,
-                message: `Reminder successfully scheduled for ${params.time}${params.repeat ? ` (repeating ${params.repeat})` : ''} to execute ${params.skillName || 'standard message'}.`,
+                message: `Reminder set for ${params.time}${params.repeat ? ` (repeating ${params.repeat})` : ''}: "${params.message}"`,
                 reminder_id: newReminder.id
             };
             console.log(JSON.stringify(response));
@@ -96,12 +97,12 @@ async function main() {
                 console.log(JSON.stringify({ success: false, message: `No reminder found with ID ${params.reminder_id}` }));
             } else {
                 fs.writeFileSync(reminderPath, JSON.stringify(reminders, null, 2));
-                console.log(JSON.stringify({ success: true, message: `Reminder ${params.reminder_id} successfully deleted.` }));
+                console.log(JSON.stringify({ success: true, message: `Reminder deleted.` }));
             }
 
         } else if (action === 'update') {
             if (!params.reminder_id) {
-                console.log(JSON.stringify({ success: false, error: 'Missing required parameter for update: reminder_id' }));
+                console.log(JSON.stringify({ success: false, error: 'Missing required parameter for update: reminder_id. Call "list" first to get the reminder ID.' }));
                 process.exit(0);
             }
 
@@ -113,22 +114,20 @@ async function main() {
 
             const r = reminders[reminderIndex];
             if (params.time) r.time = params.time;
-            if (params.message) {
-                r.args = r.args || {};
-                r.args.message = params.message;
-            }
-            if (params.skillName !== undefined) r.skill = params.skillName;
-            if (params.skillArgs !== undefined) r.args = params.skillArgs;
-            if (params.repeat !== undefined) r.repeat = params.repeat;
+            if (params.message) r.message = params.message;
+            if (params.repeat !== undefined) r.repeat = params.repeat || null;
 
             fs.writeFileSync(reminderPath, JSON.stringify(reminders, null, 2));
-            console.log(JSON.stringify({ success: true, message: `Reminder ${params.reminder_id} successfully updated.`, reminder: r }));
+            console.log(JSON.stringify({ success: true, message: `Reminder updated: "${r.message}"`, reminder: r }));
 
         } else if (action === 'list') {
             if (reminders.length === 0) {
                 console.log(JSON.stringify({ success: true, message: "You have no active reminders.", reminders: [] }));
             } else {
-                const details = reminders.map(r => `- ID: ${r.id}, Time: ${r.time}, Repeat: ${r.repeat || 'none'}, Skill: ${r.skill}, Args: ${JSON.stringify(r.args || {})}`).join('\n');
+                const details = reminders.map(r => {
+                    let d = `- ID: ${r.id}, Time: ${r.time}, Repeat: ${r.repeat || 'once'}, Message: "${r.message}"`;
+                    return d;
+                }).join('\n');
                 console.log(JSON.stringify({ success: true, message: `You have ${reminders.length} active reminder(s):\n${details}`, reminders }));
             }
         } else {

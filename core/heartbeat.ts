@@ -57,9 +57,12 @@ const GPU_SKILLS: string[] = ['voice', 'gold_tracker', 'stock_alert'];
 // Type definitions
 interface Reminder {
     time: string;
-    skill: string;
+    message?: string;
+    // Legacy fields (kept for backward compatibility)
+    skill?: string;
     args?: Record<string, unknown>;
     repeat?: 'daily' | 'weekly' | 'monthly' | string;
+    deliver_via?: 'text' | 'voice' | 'image';
 }
 
 interface SkillResult {
@@ -130,26 +133,26 @@ async function checkReminders(): Promise<void> {
                 if (now >= remTime) {
                     console.log(`⏰ Triggering reminder for ${user} at ${remTime.toISOString()}`);
                     
-                    let instruction = rem.args?.message;
-                    if (!instruction && rem.args) {
-                        // Fallback to extract instruction from other keys like 'query' or 'text' if skill was used
-                        instruction = rem.args.query || rem.args.text || JSON.stringify(rem.args);
-                    }
-                    const messageText = String(instruction || `[Reminder Event: ${rem.skill}]`);
+                    // Simply replay the user's original message.
+                    // The agent loop will figure out what to do (call skills, use voice, etc.)
+                    const messageText: string = rem.message || 
+                        (rem.args?.message as string) || 
+                        (rem.args?.query as string) || 
+                        (rem.args ? JSON.stringify(rem.args) : '') ||
+                        '[Reminder]';
                     
-                    console.log(`Processing reminder via agent loop: ${messageText}`);
+                    console.log(`Replaying reminder message: ${messageText}`);
                     
                     // Append user message directly to memory so LLM has context
                     const entry = {
                         timestamp: new Date().toISOString(),
                         role: 'user',
-                        content: `[Scheduled Reminder] Please process this instruction as requested: ${messageText}`
+                        content: `[Scheduled Reminder] ${messageText}`
                     };
                     const memoryPath = path.join(USER_DATA_ROOT, user, 'memory.log');
                     fs.appendFileSync(memoryPath, JSON.stringify(entry) + '\n');
                     
                     // Fire and forget the LLM process, or await it
-                    // Doing await inside this loop could block other reminders, better to fire alongside
                     processWithLLM(user, messageText, { jid: user })
                         .then(result => {
                             if (result.success && !result.backgrounded && result.response) {
