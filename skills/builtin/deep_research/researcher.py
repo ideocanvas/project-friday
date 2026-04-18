@@ -842,7 +842,7 @@ Example: ["url1", "url2"]
 
 Return ONLY the JSON array."""
 
-        response = call_llm(prompt, temperature=0.3, max_tokens=500)
+        response = call_llm(prompt, temperature=0.3, max_tokens=2048)
         if not response or response.startswith("Error:"):
             return
 
@@ -894,7 +894,7 @@ Return ONLY the JSON array."""
             prompt,
             system_msg="You are a research planning assistant.",
             temperature=0.3,
-            max_tokens=1024,
+            max_tokens=4096,
         )
         if result and self._is_news_query(self.query):
             result["search_type"] = "news"
@@ -909,7 +909,7 @@ Return ONLY the JSON array."""
             prompt,
             system_msg="You are a search result ranking assistant.",
             temperature=0.2,
-            max_tokens=300,
+            max_tokens=1024,
         )
         if result and "ranked_indices" in result:
             return result["ranked_indices"]
@@ -1067,7 +1067,7 @@ Return ONLY the JSON object, no other text."""
             struct_prompt,
             system_msg="You are a research data structuring assistant.",
             temperature=0.1,
-            max_tokens=800,
+            max_tokens=2048,
         )
 
     def _evaluate_sufficiency(self, iteration: int) -> Optional[Dict[str, Any]]:
@@ -1079,7 +1079,7 @@ Return ONLY the JSON object, no other text."""
             prompt,
             system_msg="You are a research evaluation assistant.",
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=2048,
         )
 
     def _synthesize(self) -> str:
@@ -1108,7 +1108,7 @@ Return ONLY the JSON object, no other text."""
 
         # For borderline cases, ask the LLM
         prompt = format_decision_prompt(summary)
-        result = call_llm_json(prompt, temperature=0.2, max_tokens=100)
+        result = call_llm_json(prompt, temperature=0.2, max_tokens=512)
         if result and "format" in result:
             return result["format"]
         return "text"  # Default to text

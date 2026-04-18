@@ -45,7 +45,7 @@ def call_llm(
     prompt: str,
     system_msg: str = "You are a helpful research assistant.",
     temperature: float = 0.7,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
     timeout: Optional[int] = None,
 ) -> str:
     """
@@ -98,7 +98,12 @@ def _call_openai(
         response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "") or ""
+        # For reasoning models, content may be empty - try reasoning_content as fallback
+        if not content.strip() and "reasoning_content" in msg:
+            content = msg["reasoning_content"] or ""
+        return content
     except requests.exceptions.Timeout:
         return "Error: LLM request timed out."
     except requests.exceptions.RequestException as e:
